@@ -9,6 +9,8 @@ local ICON_TOGGLE = "|TInterface\\Buttons\\UI-%sButton-Up:18:18:1:0|t"
 local CLR_YELLOW = "|cffffd200"
 local CLR_GRAY = "|cffaaaaaa"
 
+local ROSTER_REFRESH_THROTTLE = 10
+local ROSTER_REFRESH_TIMER = 30
 
 local LDB = LibStub("LibDataBroker-1.1")
 local LibQTip = LibStub:GetLibrary("LibQTip-1.0")
@@ -58,7 +60,7 @@ end
 local function do_OnEnter(frame)
 	local tooltip = LibQTip:Acquire("GuildTrackerTip")
 	tooltip:SmartAnchorTo(frame)
-	tooltip:SetAutoHideDelay(0.5, frame)
+	tooltip:SetAutoHideDelay(0.2, frame)
 	tooltip:EnableMouse(true)
 
 	GuildTracker:UpdateTooltip()
@@ -390,13 +392,35 @@ end
 --------------------------------------------------------------------------------	
 function GuildTracker:Refresh()
 --------------------------------------------------------------------------------	
-	if time() - self.LastUpdate > 5 then
+	if time() - self.LastUpdate > ROSTER_REFRESH_THROTTLE then
 		self:Debug("Refresh requested")
 		GuildRoster()
 	else
 		self:Debug("Refresh requested, but throttled")
 	end
 end
+
+
+--------------------------------------------------------------------------------
+function GuildTracker:StartUpdateTimer()
+--------------------------------------------------------------------------------
+	if self.timerGuildUpdate == nil then
+		self:Debug("Starting update timer")
+		self.timerGuildUpdate = self:ScheduleRepeatingTimer("Refresh", ROSTER_REFRESH_TIMER)		
+	end
+end
+
+
+--------------------------------------------------------------------------------
+function GuildTracker:StopUpdateTimer()
+--------------------------------------------------------------------------------
+	if self.timerGuildUpdate then
+		self:Debug("Cancelling update timer")
+		self:CancelTimer(self.timerGuildUpdate)
+		self.timerGuildUpdate = nil
+	end
+end
+
 
 --------------------------------------------------------------------------------
 function GuildTracker:PLAYER_LOGOUT()
@@ -417,15 +441,22 @@ function GuildTracker:PLAYER_GUILD_UPDATE(unit)
 			self.bucket_GUILD_ROSTER_UPDATE = self:RegisterBucketEvent("GUILD_ROSTER_UPDATE", 1)
 		end
 		
+		if self.db.profile.options.autorefresh then
+			self:StartUpdateTimer()
+		else
+			self:StopUpdateTimer()
+		end
+	
 		-- We can't load the database here yet, because the guildname is unknown at this point during login
 		-- so wait for the guild roster update event
-		GuildRoster()
+		self:Refresh()
 	else
 		-- This will unload the database
 		self:Debug("Not in guild, unloading database")
 		self.GuildDB = nil
 		self.GuildName = nil
 		self:UpdateLDB()
+		self:StopUpdateTimer()
 
 		if self.bucket_GUILD_ROSTER_UPDATE then
 			self:UnregisterBucket(self.bucket_GUILD_ROSTER_UPDATE)
@@ -1309,19 +1340,19 @@ end
 
 function GuildTracker:GenerateChange(state)
 	local MyNewInfo = {
-		[Field.Name] = "Crossbow",
+		[Field.Name] = UnitName("player"),
 		[Field.Rank] = 1,
-		[Field.Class] = "DRUID",
-		[Field.Level] = 85,		
+		[Field.Class] = select(2, UnitClass("player")),
+		[Field.Level] = math.max(UnitLevel("player"), 3),
 		[Field.Note] = "Wooly bear",
 		[Field.LastOnline] = 15.1,
 		[Field.SoR] = false,
 	}
 	local MyOldInfo = {
-		[Field.Name] = "Crossbow",
-		[Field.Rank] = 2,
-		[Field.Class] = "DRUID",
-		[Field.Level] = 83,		
+		[Field.Name] = MyNewInfo[Field.Name],
+		[Field.Rank] = MyNewInfo[Field.Rank] + 1,
+		[Field.Class] = MyNewInfo[Field.Class],
+		[Field.Level] = MyNewInfo[Field.Level] - 2,		
 		[Field.Note] = "Vicious cat",
 		[Field.LastOnline] = 10.0,
 		[Field.SoR] = true,
@@ -1360,6 +1391,7 @@ function GuildTracker:GetDefaults()
 			enabled = true,
 			options = {
 				autoreset = false,
+				autorefresh = true,
 				inactive = 30,
 				timeformat = 2,
 				alerts = {
@@ -1441,23 +1473,38 @@ function GuildTracker:GetOptions()
 				type = "group",
 				args = {
 					autoreset = {
-						name = CLR_YELLOW .. "Auto-clear",
+						name = CLR_YELLOW .. "Auto-clear changes",
 						desc = "Automatically clear all changes on logout or UI reload",
 						descStyle = "inline",
 						type = "toggle",
+						width = "full",						
 						order = 1,
 						get = function(key) return self.db.profile.options.autoreset end,
 						set = function(key, value) self.db.profile.options.autoreset = value end,
 					},
+				 	autorefresh = {
+						name = CLR_YELLOW .. "Auto-refresh roster",
+						desc = "Periodically scan guild roster for faster updates",
+						descStyle = "inline",
+						type = "toggle",
+						width = "full",						
+						order = 2,
+						get = function(key) return self.db.profile.options.autorefresh	end,
+						set = function(key, value)
+							self.db.profile.options.autorefresh = value
+							self:PLAYER_GUILD_UPDATE()
+						end,
+				 	},
 					grouping = {
 						name = CLR_YELLOW .. "Group changes by type",
 						desc = "Create collapsible group panels in the tooltip",
 						descStyle = "inline",
 						type = "toggle",
-						order = 2,
+						width = "full",
+						order = 3,
 						get = function(key) return self.db.profile.options.tooltip.grouping end,
 						set = function(key, value) self.db.profile.options.tooltip.grouping = value end,
-					},								
+					},	
 					timeformat = {
 						name = CLR_YELLOW .. "Timestamp format",
 						desc = function()
@@ -1470,7 +1517,7 @@ function GuildTracker:GetOptions()
 								CLR_YELLOW..TimeFormat[4].."|r\n"..ICON_TIMESTAMP .. CLR_GRAY .. " or|r " .. f14 .. "\n".. ICON_TIMESTAMP .. CLR_GRAY .. " or|r " .. f24
 						end,
 						type = "select",
-						order = 3,
+						order = 4,
 						values = function() return self:GetTableValues(TimeFormat) end,
 						get = function(key) return self.db.profile.options.timeformat end,
 						set = function(key, value) self.db.profile.options.timeformat = value end,
@@ -1504,12 +1551,23 @@ function GuildTracker:GetOptions()
 						type = "group",
 						order = 3,
 						args = {
+							sound = {
+								name = CLR_YELLOW .. "Play sound",
+								desc = "Play a sound when a guild change is detected",
+								descStyle = "inline",
+								type = "toggle",
+								width = "full",
+								order = 1,
+								get = function(key) return self.db.profile.options.alerts.sound end,
+								set = function(key, value) self.db.profile.options.alerts.sound = value end,
+							},	
 							chatmessage = {
 								name = CLR_YELLOW .. "Show chat message",
 								desc = "Display a message in the chat frame when a guild change is detected",
 								descStyle = "inline",
 								type = "toggle",
-								order = 1,
+								width = "full",
+								order = 2,
 								get = function(key) return self.db.profile.options.alerts.chatmessage end,
 								set = function(key, value) self.db.profile.options.alerts.chatmessage = value end,
 							},
@@ -1528,20 +1586,12 @@ function GuildTracker:GetOptions()
 								end,
 								type = "select",
 								disabled = function() return not self.db.profile.options.alerts.chatmessage end,
-								order = 2,
+								order = 3,
 								values = function() return self:GetTableValues(ChatFormat) end,
 								get = function(key) return self.db.profile.options.alerts.messageformat end,
 								set = function(key, value) self.db.profile.options.alerts.messageformat = value end,
 							},
-							sound = {
-								name = CLR_YELLOW .. "Play sound",
-								desc = "Play a sound when a guild change is detected",
-								descStyle = "inline",
-								type = "toggle",
-								order = 3,
-								get = function(key) return self.db.profile.options.alerts.sound end,
-								set = function(key, value) self.db.profile.options.alerts.sound = value end,
-							},							
+						
 						}
 					},
 					output = {
@@ -1582,17 +1632,19 @@ function GuildTracker:GetOptions()
 								desc = "Include the timestamp in the chat message",
 								descStyle = "inline",
 								type = "toggle",
+								width = "full",
 								order = 3,
 								get = function(key) return self.db.profile.output.timestamp end,
 								set = function(key, value) self.db.profile.output.timestamp = value end,
 							},				
 							overridetimeformat = {
 								name = function()
-									return (self.db.profile.output.timestamp and CLR_YELLOW or "").. "Override format"
+									return (self.db.profile.output.timestamp and CLR_YELLOW or "").. "Override timestamp format"
 								end,
 								desc = "Always use fixed-width timestamp for chat messages",
 								descStyle = "inline",
 								type = "toggle",
+								width = "full",
 								disabled = function() return not self.db.profile.output.timestamp end,
 								order = 4,
 								get = function(key) return self.db.profile.output.overridetimeformat end,
