@@ -145,14 +145,14 @@ local StateInfo = {
 		category = "Member",
 		shorttext = "Member joined",
 		longtext = "has joined the guild",
-		template = "has joined the guild",
+		template = "has joined the guild (note: '%s')",
 	},
 	[State.GuildLeave] = {
 		color = RGB2HEX(0.95,0.5,0.5),
 		category = "Member",
 		shorttext = "Member left",
 		longtext = "has left the guild",
-		template = "has left the guild",
+		template = "has left the guild (note: '%s')",
 	},
 	[State.RankUp] = {
 		color = RGB2HEX(0.55,1,1),
@@ -831,11 +831,7 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 		
 		msg = string.format("[%s] %s", txtTimestamp , msg)
 	end
-	
-	if string.len(item[Field.Note]) > 0 and (change.type == State.GuildLeave or change.type == State.GuildJoin) then
-		msg = string.format("%s (note: '%s')", msg, item[Field.Note])
-	end
-	
+
 	-- Insert text to edit box
 	if sendDirectly then
 	
@@ -888,7 +884,10 @@ function GuildTracker:GetChangeText(change)
 	local state = change.type
 	local stateColor, shortText, longText, template, category = self:GetStateText(state)
 	
-	if state == State.RankUp or state == State.RankDown then
+	if state == State.GuildJoin or state == State.GuildLeave then
+		local note = ((state == State.GuildJoin) and change.newinfo[Field.Note] or change.oldinfo[Field.Note]) or ""
+		template = string.format(template, note)	
+	elseif state == State.RankUp or state == State.RankDown then
 		local oldRank = GuildControlGetRankName(change.oldinfo[Field.Rank]+1)
 		local newRank = GuildControlGetRankName(change.newinfo[Field.Rank]+1)
 		template = string.format(template, oldRank, newRank)
