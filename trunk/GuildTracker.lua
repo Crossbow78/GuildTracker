@@ -21,8 +21,10 @@ local tremove = table.remove
 local tsort = table.sort
 local function tcopy(t)
   local u = { }
-  if type(t) == "table" then
-  	for k, v in pairs(t) do u[k] = v end
+  if type(t) == 'table' then
+  	for k, v in pairs(t) do
+  		u[k] = v
+  	end
   end
   return setmetatable(u, getmetatable(t))
 end
@@ -130,6 +132,7 @@ local State = {
 	Active = 8,
 	LevelChange = 9,
 	NoteChange = 10,
+	NameChange = 11,
 }
 
 local StateInfo = {
@@ -204,15 +207,20 @@ local StateInfo = {
 		template = "has gone up %d level%s and is now %d",
 	},
 	[State.NoteChange] = {
-		color = RGB2HEX(0.7,0.7,0.5),
+		color = RGB2HEX(0.75,0.55,0.55),
 		category = "Note",
 		shorttext = "Note change",
 		longtext = "got a new guild note",
 		template = "note changed from \"%s\" to \"%s\"",
 	},
+	[State.NameChange] = {
+		color = RGB2HEX(0.3,0.75,0.3),
+		category = "Name",
+		shorttext = "Name change",
+		longtext = "had a name change",
+		template = "changed name to \"%s\"",
+	},	
 }
-
-
 
 local sorts = {
 	["Name"] = function(a, b)
@@ -329,6 +337,18 @@ local sorts = {
 		 end,
 }
 
+StaticPopupDialogs["GUILDTRACKER_REMOVEALL"] = {
+	preferredIndex = 3,  -- avoid some UI taint, see http://www.wowace.com/announcements/how-to-avoid-some-ui-taint/
+  text = "Are you sure you want to remove all changes?",
+  button1 = "Yes",
+  button2 = "No",
+  OnAccept = function()
+      GuildTracker:RemoveAllChanges()
+  end,
+  timeout = 0,
+  whileDead = true,
+  hideOnEscape = true,
+}
 
 
 --------------------------------------------------------------------------------
@@ -355,7 +375,8 @@ function GuildTracker:OnInitialize()
 	
 	self.optionsFrame = LibStub("AceConfigDialog-3.0"):AddToBlizOptions("GuildTracker", "Guild Tracker")
 	self.GuildRoster = {}
-	self.LastUpdate = 0
+	self.ChangesPerState = {}
+	self.LastRosterUpdate = 0
 	
 	self:Print("Initialized")
 end
@@ -392,7 +413,7 @@ end
 --------------------------------------------------------------------------------	
 function GuildTracker:Refresh()
 --------------------------------------------------------------------------------	
-	if time() - self.LastUpdate > ROSTER_REFRESH_THROTTLE then
+	if time() - self.LastRosterUpdate > ROSTER_REFRESH_THROTTLE then
 		self:Debug("Refresh requested")
 		GuildRoster()
 	else
@@ -468,6 +489,7 @@ end
 function GuildTracker:GUILD_ROSTER_UPDATE(event, ...)
 --------------------------------------------------------------------------------
 	self:Debug("GUILD_ROSTER_UPDATE")
+	self.LastRosterUpdate = time()
 	
 	self.GuildName = GetGuildInfo("player")
 	if self.GuildName == nil then
@@ -477,7 +499,7 @@ function GuildTracker:GUILD_ROSTER_UPDATE(event, ...)
 	
 	-- Switch to our current guild database, and initialize if needed
 	self:InitGuildDatabase()
-
+	
 	-- Load current guild roster into self.GuildRoster
 	self:UpdateGuildRoster()
 	
@@ -487,10 +509,11 @@ function GuildTracker:GUILD_ROSTER_UPDATE(event, ...)
 	-- Save the current guild roster
 	self:SaveGuildRoster()
 	
+	-- Alerts for any new changes
+	self:ReportNewChanges()
+	
 	-- Update text and tooltips
 	self:UpdateLDB()
-	
-	self.LastUpdate = time()
 end
 
 
@@ -553,12 +576,11 @@ function GuildTracker:UpdateGuildChanges()
 		return
 	end
 	
-	local currentCount = #self.GuildDB.changes
-	
 	self:Debug("Detecting guild changes")
 	
 	-- First update the existing entries of our SavedRoster
-	for _, info in ipairs(oldRoster) do
+	for i = 1, #oldRoster do
+		local info = oldRoster[i]
 		local newPlayerInfo = self:FindPlayerByName(self.GuildRoster, info[Field.Name])
 		
 		if newPlayerInfo == nil then
@@ -586,25 +608,96 @@ function GuildTracker:UpdateGuildChanges()
 	end
 	
 	-- Then add any new entries
-	for _, info in ipairs(self.GuildRoster) do
+	for i = 1, #self.GuildRoster do
+		local info = self.GuildRoster[i]
 		local oldPlayerInfo = self:FindPlayerByName(oldRoster, info[Field.Name])
 		if oldPlayerInfo == nil then
 			self:AddGuildChange(State.GuildJoin, nil, info)
 		end
 	end
-	
+
+	self:SortAndGroupChanges()
+	self:DetectNameChanges()
+end
+
+
+--------------------------------------------------------------------------------	
+function GuildTracker:SortAndGroupChanges()
+--------------------------------------------------------------------------------	
+	-- Remove 'unchanged' entries
+	local lastUsedIdx = 1
+	for i = 1, #self.GuildDB.changes do
+		self.GuildDB.changes[lastUsedIdx] = self.GuildDB.changes[i]
+		if self.GuildDB.changes[i].type ~= State.Unchanged then
+			lastUsedIdx = lastUsedIdx + 1
+		end
+	end
+	for i = lastUsedIdx, #self.GuildDB.changes do
+		self.GuildDB.changes[i] = nil
+	end
+
+	-- Apply sorting	
 	local sort_func = sorts[self.db.profile.options.tooltip.sorting]
 	if sort_func ~= nil then
 		tsort(self.GuildDB.changes, sort_func)
 	end
-
 	
-	local updatedCount = #self.GuildDB.changes
-	
-	if updatedCount > currentCount then
-		self:AlertNewChange()
+	-- Apply grouping per state
+	local groupChanges = {}
+	for key, val in pairs(State) do
+		groupChanges[val] = {}
+	end
+	for idx,change in ipairs(self.GuildDB.changes) do
+		tinsert(groupChanges[change.type], idx)
 	end
 	
+	self.ChangesPerState = groupChanges
+end
+	
+--------------------------------------------------------------------------------
+function GuildTracker:DetectNameChanges()
+--------------------------------------------------------------------------------
+	local foundNameChanges = false
+	local joins = self.ChangesPerState[State.GuildJoin]
+	local quits = self.ChangesPerState[State.GuildLeave]
+	
+	if joins and quits and #joins > 0 and #quits > 0 then
+		for _, joinIdx in ipairs(joins) do
+			local changeJoin = self.GuildDB.changes[joinIdx]
+			
+			for _, quitIdx in ipairs(quits) do
+				local changeQuit = self.GuildDB.changes[quitIdx]
+				
+				if self:IsNameChange(changeJoin, changeQuit) then
+					self:Debug(format("Merging '%s quit' and '%s joined' into name change", changeQuit.oldinfo[Field.Name], changeJoin.newinfo[Field.Name]))
+					changeJoin.type = State.NameChange
+					changeJoin.oldinfo = changeQuit.oldinfo
+					changeQuit.type = State.Unchanged
+					foundNameChanges = true
+					break
+				end
+				
+			end
+		end
+	end
+	
+	if foundNameChanges then
+		-- This will clean up our table, and re-group the name change entries
+		self:SortAndGroupChanges()
+	end
+end	
+
+--------------------------------------------------------------------------------
+function GuildTracker:IsNameChange(changeJoin, changeQuit)
+--------------------------------------------------------------------------------
+	local infoJoin = changeJoin.newinfo
+	local infoQuit = changeQuit.oldinfo
+	
+	return changeJoin.timestamp == changeQuit.timestamp
+			and infoJoin[Field.Class] == infoQuit[Field.Class]
+			and infoJoin[Field.Rank] == infoQuit[Field.Rank]
+			and infoJoin[Field.Level] == infoQuit[Field.Level]
+			and infoJoin[Field.Note] == infoQuit[Field.Note]
 end
 	
 --------------------------------------------------------------------------------	
@@ -615,30 +708,23 @@ function GuildTracker:AddGuildChange(state, oldInfo, newInfo)
 		return
 	end
 	
+	self:Debug("Adding guild change of type " .. state)
+	
 	local newchange = {}
 	
-	newchange.timestamp = time()
+	newchange.timestamp = self.LastRosterUpdate
 	newchange.oldinfo = tcopy(oldInfo)
 	newchange.newinfo = tcopy(newInfo)
 	newchange.type = state
 	
 	tinsert(self.GuildDB.changes, newchange)
-
-	-- Chat alert
-	if self.db.profile.options.alerts.chatmessage then
-		local msg = self:GetAlertMessage(newchange, self.db.profile.options.alerts.messageformat)
-		self:Print(msg)
-	else
-		self:Debug("Adding guild change of type " .. state)
-	end
-	
 end
 	
 --------------------------------------------------------------------------------
 function GuildTracker:GetAlertMessage(change, msgFormat)
 --------------------------------------------------------------------------------
 	local state = change.type
-	local info = (state ~= State.GuildLeave) and change.newinfo or change.oldinfo
+	local info = (state == State.GuildLeave or state == State.NameChange) and change.oldinfo or change.newinfo
 	local nameColor = RAID_CLASS_COLORS_hex[info[Field.Class]]
 	local nameText = info[Field.Name]
 
@@ -666,14 +752,16 @@ function GuildTracker:SaveGuildRoster()
 	self:Debug("Storing guild roster")
 	
 	local updated, added, removed = 0, 0, 0
-	local removeList = {}
+	local lastusedIdx = 1
 	
-	for idx = 1, #self.GuildDB.roster do
+	-- Update the saved roster entries, and remove the ones that no longer exist
+	for idx = 1, #self.GuildDB.roster  do
 		local info = self.GuildDB.roster[idx]
+		self.GuildDB.roster[lastusedIdx] = info
+		
 		local newPlayerInfo = self:FindPlayerByName(self.GuildRoster, info[Field.Name])	
-		if newPlayerInfo == nil then
-			tinsert(removeList, idx)
-		else
+		if newPlayerInfo ~= nil then
+			lastusedIdx = lastusedIdx + 1
 			updated = updated + 1
 			
 			for _, key in pairs(Field) do
@@ -681,12 +769,11 @@ function GuildTracker:SaveGuildRoster()
 			end
 		end
 	end
-	
-	for _, idx in ipairs(removeList) do
-		removed = removed + 1
-		tremove(self.GuildDB.roster, idx)
+	for idx = lastusedIdx, #self.GuildDB.roster do
+		self.GuildDB.roster[idx] = nil
 	end
 	
+	-- Add any new roster entries
 	for idx = 1, #self.GuildRoster do
 		local info = self.GuildRoster[idx]
 		local oldPlayerInfo = self:FindPlayerByName(self.GuildDB.roster, info[Field.Name])
@@ -697,46 +784,47 @@ function GuildTracker:SaveGuildRoster()
 		end
 	end
 	
-	self.GuildDB.updated = time()
+	self.GuildDB.updated = self.LastRosterUpdate
 	
 	self:Debug(string.format("Roster: %d added, %d removed, %d updated", added, removed, updated))
 end
 
 --------------------------------------------------------------------------------
-function GuildTracker:ApplyTest()
+function GuildTracker:ReportNewChanges()
 --------------------------------------------------------------------------------
-	local testitem1 = self:FindPlayerByName(self.GuildRoster, "Crossbow")
-	testitem1[Field.Rank] = 8
+	local newChanges = false
 	
-	local testitem2 = self:FindPlayerByName(self.GuildRoster, "Boozie")
-	testitem2[Field.LastOnline] = 65
-
-	local testitem3 = self:FindPlayerByName(self.GuildRoster, "Aloryna")
-	testitem3[Field.Level] = 15
-
-	local testitem4 = self:FindPlayerByName(self.GuildRoster, "Atuad")
-	testitem4[Field.Note] = "Test note"
+	for _,changeList in pairs(self.ChangesPerState) do
+		for _,changeIdx in ipairs(changeList) do
+		
+			local change = self.GuildDB.changes[changeIdx]
+			
+			-- Only report new changes
+			if change.timestamp >= self.LastRosterUpdate then
+				newChanges = true
+				-- Chat alert
+				if self.db.profile.options.alerts.chatmessage then
+					local msg = self:GetAlertMessage(change, self.db.profile.options.alerts.messageformat)
+					self:Print(msg)
+				end
+			end
+			
+		end
+	end
 	
-	tremove(self.GuildRoster, 1)
-	
-	self:UpdateGuildChanges()
-	self:SaveGuildRoster()
-	self:UpdateLDB()
-end
-
-	
---------------------------------------------------------------------------------
-function GuildTracker:AlertNewChange()
---------------------------------------------------------------------------------
-	if self.db.profile.options.alerts.sound then
-		PlaySoundFile("Sound\\Interface\\AlarmClockWarning1.wav")
+	if newChanges then
+		-- Sound alert
+		if self.db.profile.options.alerts.sound then
+			PlaySoundFile("Sound\\Interface\\AlarmClockWarning1.wav")
+		end
 	end
 end
 
 --------------------------------------------------------------------------------
 function GuildTracker:FindPlayerByName(list, name)
 --------------------------------------------------------------------------------
-	for _,info in ipairs(list) do
+	for i = 1, #list do
+		local info = list[i]
 		if info[Field.Name] == name then
 			return info
 		end
@@ -751,6 +839,7 @@ function GuildTracker:RemoveChange(idx)
 	if self.GuildDB ~= nil then
 		tremove(self.GuildDB.changes, idx)
 	end
+	self:SortAndGroupChanges()
 	self:UpdateLDB()
 end
 
@@ -760,10 +849,10 @@ function GuildTracker:RemoveAllChanges()
 	self:Debug("Clearing all guild changes")
 	if self.GuildDB ~= nil then
 		self.GuildDB.changes = {}
+		self.ChangesPerState = {}
 		self:UpdateLDB()
 	end
 end
-
 
 --------------------------------------------------------------------------------
 function GuildTracker:ClearGuild()
@@ -773,6 +862,7 @@ function GuildTracker:ClearGuild()
 		self.GuildDB.roster = {}
 		self.GuildDB.changes = {}
 		self.GuildRoster = {}
+		self.ChangesPerState = {}
 		self:UpdateLDB()
 	end
 end
@@ -791,7 +881,7 @@ function GuildTracker:HandleSortCommand(sortkey)
 		self.db.profile.options.tooltip.sort_ascending = not currentdirection
 	end
 
-	self:UpdateGuildChanges()
+	self:SortAndGroupChanges()
 	self:UpdateTooltip()
 end
 
@@ -814,7 +904,7 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 	end
 	
 	local change = self.GuildDB.changes[idx]
-	local item = (change.type ~= State.GuildLeave) and change.newinfo or change.oldinfo
+	local item = (change.type == State.GuildLeave or change.type == State.NameChange) and change.oldinfo or change.newinfo
 	
 	local _, _, longText, changeText = self:GetChangeText(change)
 	
@@ -905,6 +995,10 @@ function GuildTracker:GetChangeText(change)
 		local oldNote = change.oldinfo[Field.Note]
 		local newNote = change.newinfo[Field.Note]
 		template = string.format(template, oldNote, newNote)
+	elseif state == State.NameChange then
+		local oldName = change.oldinfo[Field.Name]
+		local newName = change.newinfo[Field.Name]
+		template = string.format(template, newName)
 	end
 
 	return stateColor, shortText, longText, template, category
@@ -966,7 +1060,8 @@ local function OnDeleteButton(_, idx, button)
 	if idx ~= nil then
 		GuildTracker:RemoveChange(idx)
 	else
-		GuildTracker:RemoveAllChanges()
+		StaticPopup_Show("GUILDTRACKER_REMOVEALL")
+		--GuildTracker:RemoveAllChanges()
 	end
 end
 
@@ -1103,17 +1198,9 @@ function GuildTracker:UpdateTooltip()
 		return
 	end
 
-	local groupChanges = {}
-	for key, val in pairs(State) do
-		groupChanges[val] = {}
-	end
-	for idx,change in ipairs(self.GuildDB.changes) do
-		tinsert(groupChanges[change.type], idx)
-	end
-	
 	if self.db.profile.options.tooltip.grouping then
 	
-		for stateidx,changeList in pairs(groupChanges) do
+		for stateidx,changeList in pairs(self.ChangesPerState) do
 			if #changeList > 0 then
 				local headerLineNum = lineNum + 1
 	
@@ -1192,6 +1279,7 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 		txtTimestamp = ICON_TIMESTAMP
 	end
 
+	local oldName = nil
 	local oldLevel = nil
 	local oldRank = nil
 	local oldNote = nil
@@ -1209,6 +1297,8 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	elseif changeType == State.NoteChange then
 		oldNote = changeItem.oldinfo[Field.Note]
 		txtNote = CLR_YELLOW .. txtNote
+	elseif changeType == State.NameChange then
+		oldName = changeItem.oldinfo[Field.Name]
 	end
 
 	lineNum = tooltip:AddLine()
@@ -1216,7 +1306,10 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, clrChange .. txtChange)
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtName)
-	
+	if oldName then
+		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous name:", oldName})
+		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+	end
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtLevel)
 	if oldLevel then
 		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous level:", oldLevel})
@@ -1337,7 +1430,9 @@ function GuildTracker:CalculateTimestampFormats(timestamp)
 end
 
 
+--------------------------------------------------------------------------------
 function GuildTracker:GenerateChange(state)
+--------------------------------------------------------------------------------
 	local MyNewInfo = {
 		[Field.Name] = UnitName("player"),
 		[Field.Rank] = 1,
@@ -1375,6 +1470,34 @@ function GuildTracker:Debug(msg)
 	end
 end
 
+--------------------------------------------------------------------------------
+function GuildTracker:ApplyTest()
+--------------------------------------------------------------------------------
+	self.LastRosterUpdate = time()
+	
+	local testitem1 = self:FindPlayerByName(self.GuildRoster, "Crossbow")
+	testitem1[Field.Rank] = 8
+	
+	local testitem2 = self:FindPlayerByName(self.GuildRoster, "Boozie")
+	testitem2[Field.LastOnline] = 65
+
+	local testitem3 = self:FindPlayerByName(self.GuildRoster, "Aloryna")
+	testitem3[Field.Level] = 15
+
+	local testitem4 = self:FindPlayerByName(self.GuildRoster, "Atuad")
+	testitem4[Field.Note] = "Test note"
+	
+	local testitem5 = self:FindPlayerByName(self.GuildRoster, "Ironica")
+	testitem5[Field.Name] = "Orinaci"
+	
+	tremove(self.GuildRoster, 1)
+	
+	self:UpdateGuildChanges()
+	self:SaveGuildRoster()
+	self:ReportNewChanges()
+	self:UpdateLDB()
+end
+
 ----- CONFIG
 --------------------------------------------------------------------------------
 function GuildTracker:GetDefaults()
@@ -1409,6 +1532,7 @@ function GuildTracker:GetDefaults()
 					[8] = true,
 					[9] = true,
 					[10] = true,
+					[11] = true,
 				},				
 				tooltip = {
 					grouping = false,
@@ -1530,11 +1654,16 @@ function GuildTracker:GetOptions()
 						set = function(key, value) self.db.profile.options.filter[key.arg] = value end,
 						args = {
 							-- Checkboxes are dynamically injected here
+							header = {
+								name = "",
+								order = 20,
+								type = "header",
+							},
 							inactive = {
 								name = "Inactivity threshold",
 								desc = "Set the amount of offline days before a player is marked inactive",
 								type = "range",
-								order = 20,
+								order = 21,
 								min = 1,
 								softMax = 365,
 								step = 1,
