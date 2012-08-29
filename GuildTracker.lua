@@ -452,7 +452,7 @@ function GuildTracker:PLAYER_LOGOUT()
 end
 
 --------------------------------------------------------------------------------
-function GuildTracker:PLAYER_GUILD_UPDATE(unit)
+function GuildTracker:PLAYER_GUILD_UPDATE(event, unit)
 --------------------------------------------------------------------------------
 	self:Debug("PLAYER_GUILD_UPDATE " .. (unit or "(nil)"))
 	if unit and unit ~= "player" then return end
@@ -486,7 +486,7 @@ function GuildTracker:PLAYER_GUILD_UPDATE(unit)
 end
 
 --------------------------------------------------------------------------------
-function GuildTracker:GUILD_ROSTER_UPDATE(event, ...)
+function GuildTracker:GUILD_ROSTER_UPDATE()
 --------------------------------------------------------------------------------
 	self:Debug("GUILD_ROSTER_UPDATE")
 	self.LastRosterUpdate = time()
@@ -1060,8 +1060,12 @@ local function OnDeleteButton(_, idx, button)
 	if idx ~= nil then
 		GuildTracker:RemoveChange(idx)
 	else
-		StaticPopup_Show("GUILDTRACKER_REMOVEALL")
 		--GuildTracker:RemoveAllChanges()
+		if LibQTip:IsAcquired("GuildTrackerTip") then
+			local tooltip = LibQTip:Acquire("GuildTrackerTip")
+			tooltip:Hide()
+		end
+		StaticPopup_Show("GUILDTRACKER_REMOVEALL")
 	end
 end
 
