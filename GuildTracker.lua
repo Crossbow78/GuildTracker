@@ -721,27 +721,28 @@ function GuildTracker:AddGuildChange(state, oldInfo, newInfo)
 end
 	
 --------------------------------------------------------------------------------
-function GuildTracker:GetAlertMessage(change, msgFormat)
+function GuildTracker:GetAlertMessage(change, msgFormat, makelink)
 --------------------------------------------------------------------------------
 	local state = change.type
 	local info = (state == State.GuildLeave or state == State.NameChange) and change.oldinfo or change.newinfo
-	local nameColor = RAID_CLASS_COLORS_hex[info[Field.Class]]
-	local nameText = info[Field.Name]
+	local name = info[Field.Name]
+	local coloredName = "[" .. RAID_CLASS_COLORS_hex[info[Field.Class]] .. name .. "|r" .. "]"
+	local nameText = makelink and format("|Hplayer:%s|h%s|h", name, coloredName) or coloredName
 
 	if msgFormat == 1 then -- Short
 	
 		local stateColor, stateText, _, _ = self:GetStateText(state)
-		return string.format("%s%s|r: [%s%s|r]", stateColor, stateText, nameColor, nameText)
+		return string.format("%s%s|r: %s", stateColor, stateText, nameText)
 		
 	elseif msgFormat == 2 then -- Long
 	
 		local stateColor, stateText, longText, _ = self:GetStateText(state)
-		return string.format("Player %s: [%s%s|r]", longText, nameColor, nameText)
+		return string.format("Player %s: %s", longText, nameText)
 		
 	else -- if msgFormat == 3 then -- Full
 	
 		local stateColor, stateText, _, fullText, category = self:GetChangeText(change)
-		return string.format("%s%s|r: [%s%s|r] %s", stateColor, category, nameColor, nameText, fullText)
+		return string.format("%s%s|r: %s %s", stateColor, category, nameText, fullText)
 		
 	end
 end
@@ -804,7 +805,7 @@ function GuildTracker:ReportNewChanges()
 				newChanges = true
 				-- Chat alert
 				if self.db.profile.options.alerts.chatmessage then
-					local msg = self:GetAlertMessage(change, self.db.profile.options.alerts.messageformat)
+					local msg = self:GetAlertMessage(change, self.db.profile.options.alerts.messageformat, true)
 					self:Print(msg)
 				end
 			end
@@ -928,9 +929,9 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 		-- Send straight to chat channel
 		for chat, state in pairs(self.db.profile.output.chat) do
 			if state then
-				if (GetNumPartyMembers() > 0 or chat ~= "PARTY") and
-					 (GetNumRaidMembers() > 0 or chat ~= "RAID") and
-					 (IsRaidOfficer() or IsRaidLeader() or chat ~= "RAID_WARNING") then
+				if (chat ~= "RAID" or IsInRaid()) and
+					 (chat ~= "PARTY" or IsInGroup()) and
+					 (chat ~= "RAID_WARNING" or UnitIsRaidOfficer("player") or UnitIsRaidLeader("player")) then
 					SendChatMessage(msg, chat)
 				end
 			end
