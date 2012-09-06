@@ -14,6 +14,7 @@ local ROSTER_REFRESH_TIMER = 30
 
 local LDB = LibStub("LibDataBroker-1.1")
 local LibQTip = LibStub:GetLibrary("LibQTip-1.0")
+local LDBIcon = LibStub("LibDBIcon-1.0")
 
 --- Some local helper functions
 local tinsert = table.insert
@@ -370,6 +371,8 @@ function GuildTracker:OnInitialize()
 			OnLeave = do_OnLeave,
 			OnClick = do_OnClick,
 		})	
+		
+	LDBIcon:Register("GuildTrackerIcon", self.dbo, self.db.profile.options.minimap)		
 	
 	LibStub("AceConfig-3.0"):RegisterOptionsTable("GuildTracker", self.options)
 	
@@ -1519,8 +1522,12 @@ function GuildTracker:GetDefaults()
 			options = {
 				autoreset = false,
 				autorefresh = true,
+				expiredays = 3,
 				inactive = 30,
 				timeformat = 2,
+				minimap = {
+					hide = true,
+				},
 				alerts = {
 					sound = true,
 					chatmessage = true,
@@ -1616,7 +1623,7 @@ function GuildTracker:GetOptions()
 						descStyle = "inline",
 						type = "toggle",
 						width = "full",						
-						order = 2,
+						order = 3,
 						get = function(key) return self.db.profile.options.autorefresh	end,
 						set = function(key, value)
 							self.db.profile.options.autorefresh = value
@@ -1629,10 +1636,23 @@ function GuildTracker:GetOptions()
 						descStyle = "inline",
 						type = "toggle",
 						width = "full",
-						order = 3,
+						order = 4,
 						get = function(key) return self.db.profile.options.tooltip.grouping end,
 						set = function(key, value) self.db.profile.options.tooltip.grouping = value end,
-					},	
+					},
+					minimap = {
+						name = CLR_YELLOW .. "Minimap icon",
+						desc = "Display a separate minimap icon",
+						descStyle = "inline",
+						type = "toggle",
+						width = "full",
+						order = 5,
+						get = function(key) return not self.db.profile.options.minimap.hide end,
+						set = function(key, value)
+							self.db.profile.options.minimap.hide = not value
+							self:UpdateMinimapIcon()
+						end,
+					},
 					timeformat = {
 						name = CLR_YELLOW .. "Timestamp format",
 						desc = function()
@@ -1645,7 +1665,7 @@ function GuildTracker:GetOptions()
 								CLR_YELLOW..TimeFormat[4].."|r\n"..ICON_TIMESTAMP .. CLR_GRAY .. " or|r " .. f14 .. "\n".. ICON_TIMESTAMP .. CLR_GRAY .. " or|r " .. f24
 						end,
 						type = "select",
-						order = 4,
+						order = 6,
 						values = function() return self:GetTableValues(TimeFormat) end,
 						get = function(key) return self.db.profile.options.timeformat end,
 						set = function(key, value) self.db.profile.options.timeformat = value end,
@@ -1817,6 +1837,13 @@ function GuildTracker:IsChatTypeEnabled(name)
 	return self.db.profile.output.chat[name]
 end
 
+function GuildTracker:UpdateMinimapIcon()
+	if self.db.profile.options.minimap.hide then
+		LDBIcon:Hide("GuildTrackerIcon")
+	else
+		LDBIcon:Show("GuildTrackerIcon")
+	end
+end
 
 function GuildTracker:EnableCustomChannel(name, value)
 	if value and not self.db.profile.output.channel[name] then
