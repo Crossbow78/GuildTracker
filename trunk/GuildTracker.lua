@@ -445,11 +445,11 @@ function GuildTracker:StopUpdateTimer()
 	end
 end
 
-
 --------------------------------------------------------------------------------
 function GuildTracker:PLAYER_LOGOUT()
 --------------------------------------------------------------------------------
-	if self.db.profile.options.autoreset then
+	-- Weird things happen during logout, profile options may have been already cleaned up
+	if self.db and self.db.profile and self.db.profile.options and self.db.profile.options.autoreset then
 		self:RemoveAllChanges()
 	end
 end
@@ -514,6 +514,9 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 	
 	-- Alerts for any new changes
 	self:ReportNewChanges()
+	
+	-- Auto expire changes
+	self:AutoExpireChanges()
 	
 	-- Update text and tooltips
 	self:UpdateLDB()
@@ -868,6 +871,35 @@ function GuildTracker:ClearGuild()
 		self.GuildRoster = {}
 		self.ChangesPerState = {}
 		self:UpdateLDB()
+	end
+end
+
+--------------------------------------------------------------------------------
+function GuildTracker:AutoExpireChanges()
+--------------------------------------------------------------------------------
+	self:Debug("Checking for expired changes")
+	if self.db.profile.options.autoexpire then
+		local foundExpired = false
+		local expiretime = time() - self.db.profile.options.expiretime * 3600
+		if self.GuildDB ~= nil then
+			-- Remove 'expired' entries
+			local lastUsedIdx = 1
+			for i = 1, #self.GuildDB.changes do
+				self.GuildDB.changes[lastUsedIdx] = self.GuildDB.changes[i]
+				if self.GuildDB.changes[i].timestamp > expiretime then
+					-- Do not expire this item yet
+					lastUsedIdx = lastUsedIdx + 1
+				else
+					foundExpired = true
+				end
+			end
+			for i = lastUsedIdx, #self.GuildDB.changes do
+				self.GuildDB.changes[i] = nil
+			end
+		end
+		if foundExpired then
+			self:SortAndGroupChanges()
+		end
 	end
 end
 
@@ -1503,6 +1535,7 @@ function GuildTracker:ApplyTest()
 	self:UpdateGuildChanges()
 	self:SaveGuildRoster()
 	self:ReportNewChanges()
+	self:AutoExpireChanges()
 	self:UpdateLDB()
 end
 
@@ -1522,7 +1555,8 @@ function GuildTracker:GetDefaults()
 			options = {
 				autoreset = false,
 				autorefresh = true,
-				expiredays = 3,
+				autoexpire = false,
+				expiretime = 3,
 				inactive = 30,
 				timeformat = 2,
 				minimap = {
@@ -1607,46 +1641,26 @@ function GuildTracker:GetOptions()
 				desc = "Control general options",
 				type = "group",
 				args = {
-					autoreset = {
-						name = CLR_YELLOW .. "Auto-clear changes",
-						desc = "Automatically clear all changes on logout or UI reload",
-						descStyle = "inline",
-						type = "toggle",
-						width = "full",						
-						order = 1,
-						get = function(key) return self.db.profile.options.autoreset end,
-						set = function(key, value) self.db.profile.options.autoreset = value end,
-					},
 				 	autorefresh = {
 						name = CLR_YELLOW .. "Auto-refresh roster",
 						desc = "Periodically scan guild roster for faster updates",
 						descStyle = "inline",
 						type = "toggle",
 						width = "full",						
-						order = 3,
+						order = 1,
 						get = function(key) return self.db.profile.options.autorefresh	end,
 						set = function(key, value)
 							self.db.profile.options.autorefresh = value
 							self:PLAYER_GUILD_UPDATE()
 						end,
 				 	},
-					grouping = {
-						name = CLR_YELLOW .. "Group changes by type",
-						desc = "Create collapsible group panels in the tooltip",
-						descStyle = "inline",
-						type = "toggle",
-						width = "full",
-						order = 4,
-						get = function(key) return self.db.profile.options.tooltip.grouping end,
-						set = function(key, value) self.db.profile.options.tooltip.grouping = value end,
-					},
 					minimap = {
 						name = CLR_YELLOW .. "Minimap icon",
 						desc = "Display a separate minimap icon",
 						descStyle = "inline",
 						type = "toggle",
 						width = "full",
-						order = 5,
+						order = 3,
 						get = function(key) return not self.db.profile.options.minimap.hide end,
 						set = function(key, value)
 							self.db.profile.options.minimap.hide = not value
@@ -1665,12 +1679,65 @@ function GuildTracker:GetOptions()
 								CLR_YELLOW..TimeFormat[4].."|r\n"..ICON_TIMESTAMP .. CLR_GRAY .. " or|r " .. f14 .. "\n".. ICON_TIMESTAMP .. CLR_GRAY .. " or|r " .. f24
 						end,
 						type = "select",
-						order = 6,
+						order = 7,
 						values = function() return self:GetTableValues(TimeFormat) end,
 						get = function(key) return self.db.profile.options.timeformat end,
 						set = function(key, value) self.db.profile.options.timeformat = value end,
 					},
-					filter = {
+					historygroup = {
+						name = "History",
+						desc = "Control the history list of changes",
+						type = "group",
+						order = 2,
+						args = {
+							grouping = {
+								name = CLR_YELLOW .. "Group changes by type",
+								desc = "Create collapsible group panels in the history list",
+								descStyle = "inline",
+								type = "toggle",
+								width = "full",
+								order = 1,
+								get = function(key) return self.db.profile.options.tooltip.grouping end,
+								set = function(key, value) self.db.profile.options.tooltip.grouping = value end,
+							},					
+							autoreset = {
+								name = CLR_YELLOW .. "Auto-clear each session",
+								desc = "Automatically clear all changes on logout or UI reload",
+								descStyle = "inline",
+								type = "toggle",
+								width = "full",						
+								order = 2,
+								get = function(key) return self.db.profile.options.autoreset end,
+								set = function(key, value) self.db.profile.options.autoreset = value end,
+							},
+							autoexpire = {
+								name = CLR_YELLOW .. "Auto-expire by time",
+								desc = "Automatically remove changes older than the configured threshold",
+								descStyle = "inline",
+								type = "toggle",
+								width = "full",
+								order = 3,
+								get = function(key) return self.db.profile.options.autoexpire end,
+								set = function(key, value) self.db.profile.options.autoexpire = value end,
+							},
+							expiretime = {
+								name = function()
+									return (self.db.profile.output.autoexpire and CLR_YELLOW or "").. "Expire threshold (hours)"
+								end,
+								desc = "Set the number of hours before detected changes will expire",
+								disabled = function() return not self.db.profile.options.autoexpire end,
+								type = "range",
+								order = 4,
+								min = 0,
+								softMax = 72,
+								step = 1,
+								bigStep = 1,
+								get = function(key) return self.db.profile.options.expiretime end,
+								set = function(key, value) self.db.profile.options.expiretime = value end,
+							},
+						},
+					},
+					filtergroup = {
 						name = "Filter",
 						desc = "Control which types of changes are tracked",
 						type = "group",
@@ -1698,7 +1765,7 @@ function GuildTracker:GetOptions()
 							},							
 						},
 					},
-					alerts = {
+					alertsgroup = {
 						name = "Alerts",
 						desc = "Control the local alerts when guild changes are detected",
 						type = "group",
@@ -1747,7 +1814,7 @@ function GuildTracker:GetOptions()
 						
 						}
 					},
-					output = {
+					outputgroup = {
 						name = "Output",
 						desc = "Control the destination and formatting of the outgoing chat messages",
 						type = "group",
@@ -1865,7 +1932,7 @@ end
 function GuildTracker:GenerateStateOptions()
 	for _,v in pairs(State) do
 		if v ~= State.Unchanged then
-			self.options.args.options.args.filter.args[tostring(v)] = self:GenerateStateOption(v)
+			self.options.args.options.args.filtergroup.args[tostring(v)] = self:GenerateStateOption(v)
 		end
 	end
 end
