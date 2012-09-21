@@ -1,9 +1,0 @@
-## Interface: 50001
-## Title: Guild Tracker
-## Notes: Keeps track of changes in the guild roster between logins, and also shows who disabled their account
-## Author: Dracula
-## Version: 5.0.5-1
-## SavedVariables: GuildTrackerDB
-
-embeds.xml
-GuildTracker.lua
