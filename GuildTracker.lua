@@ -1,5 +1,6 @@
 GuildTracker = LibStub("AceAddon-3.0"):NewAddon("GuildTracker", "AceBucket-3.0", "AceEvent-3.0", "AceConsole-3.0", "AceTimer-3.0")
 
+local DB_VERSION = 1
 
 local ICON_DELETE = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:16:16:0:0:16:16:0:16:0:16|t"
 local ICON_CHAT = "|TInterface\\ChatFrame\\UI-ChatWhisperIcon:16:16:0:0:16:16:0:16:0:16|t"
@@ -133,7 +134,8 @@ local State = {
 	Active = 8,
 	LevelChange = 9,
 	NoteChange = 10,
-	NameChange = 11,
+	OfficerNoteChange = 11,	
+	NameChange = 12,
 }
 
 local StateInfo = {
@@ -208,12 +210,19 @@ local StateInfo = {
 		template = "has gone up %d level%s and is now %d",
 	},
 	[State.NoteChange] = {
-		color = RGB2HEX(0.75,0.55,0.55),
+		color = RGB2HEX(0.79,0.58,0.58),
 		category = "Note",
 		shorttext = "Note change",
 		longtext = "got a new guild note",
 		template = "note changed from \"%s\" to \"%s\"",
 	},
+	[State.OfficerNoteChange] = {
+		color = RGB2HEX(0.65,0.45,0.45),
+		category = "Note",
+		shorttext = "Officer note change",
+		longtext = "got a new officer note",
+		template = "officer note changed from \"%s\" to \"%s\"",
+	},	
 	[State.NameChange] = {
 		color = RGB2HEX(0.3,0.75,0.3),
 		category = "Name",
@@ -534,6 +543,7 @@ function GuildTracker:InitGuildDatabase()
 		self:Print(string.format("Creating new database for guild '%s'", guildname))
 		self.db.realm.guild[guildname] = {
 			updated = time(),
+			version = DB_VERSION,
 			roster = {},
 			changes = {}
 		}
@@ -542,6 +552,18 @@ function GuildTracker:InitGuildDatabase()
 	end
 	
 	self.GuildDB = self.db.realm.guild[guildname]
+	
+	self:UpgradeGuildDatabase()
+end
+
+--------------------------------------------------------------------------------	
+function GuildTracker:UpgradeGuildDatabase()
+--------------------------------------------------------------------------------	
+	if self.GuildDB.version == nil then
+		self:Debug("Upgrading database to version 1")
+		self.GuildDB.version = 1
+		self.GuildDB.isOfficer = CanViewOfficerNote()
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -570,7 +592,13 @@ end
 --------------------------------------------------------------------------------
 function GuildTracker:UpdateGuildChanges()
 --------------------------------------------------------------------------------
+	-- We don't know what guild we're updating yet
 	if self.GuildDB == nil then
+		return
+	end
+	
+	-- Fail-safe when the roster returned 0 guild members; this can't be right so ignore
+	if #self.GuildRoster == 0 then
 		return
 	end
 	
@@ -608,6 +636,10 @@ function GuildTracker:UpdateGuildChanges()
 				self:AddGuildChange(State.LevelChange, info, newPlayerInfo)
 			elseif newPlayerInfo[Field.Note] ~= info[Field.Note] then
 				self:AddGuildChange(State.NoteChange, info, newPlayerInfo)
+			end
+			
+			if newPlayerInfo[Field.OfficerNote] ~= info[Field.OfficerNote] and self.GuildDB.isOfficer == CanViewOfficerNote() then
+				 self:AddGuildChange(State.OfficerNoteChange, info, newPlayerInfo)
 			end
 			
 		end
@@ -792,6 +824,7 @@ function GuildTracker:SaveGuildRoster()
 	end
 	
 	self.GuildDB.updated = self.LastRosterUpdate
+	self.GuildDB.isOfficer = CanViewOfficerNote()
 	
 	self:Debug(string.format("Roster: %d added, %d removed, %d updated", added, removed, updated))
 end
@@ -1035,6 +1068,10 @@ function GuildTracker:GetChangeText(change)
 		local oldName = change.oldinfo[Field.Name]
 		local newName = change.newinfo[Field.Name]
 		template = string.format(template, newName)
+	elseif state == State.OfficerNoteChange then
+		local oldNote = change.oldinfo[Field.OfficerNote]
+		local newNote = change.newinfo[Field.OfficerNote]
+		template = string.format(template, oldNote, newNote)
 	end
 
 	return stateColor, shortText, longText, template, category
@@ -1310,7 +1347,7 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	local txtName = RAID_CLASS_COLORS_hex[item[Field.Class]] .. item[Field.Name]
 	local txtLevel = item[Field.Level]
 	local txtRank = GuildControlGetRankName(item[Field.Rank]+1)
-	local txtNote = item[Field.Note]
+	local txtNote = (changeType == State.OfficerNoteChange) and item[Field.OfficerNote] or item[Field.Note]
 	local txtOffline = self:GetFormattedLastOnline(item[Field.LastOnline])
 	local txtTimestamp, fullTimestamp = self:GetFormattedTimestamp(changeItem.timestamp)
 
@@ -1339,6 +1376,9 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 		txtNote = CLR_YELLOW .. txtNote
 	elseif changeType == State.NameChange then
 		oldName = changeItem.oldinfo[Field.Name]
+	elseif changeType == State.OfficerNoteChange then
+		oldNote = changeItem.oldinfo[Field.OfficerNote]
+		txtNote = CLR_YELLOW .. txtNote
 	end
 
 	lineNum = tooltip:AddLine()
@@ -1369,7 +1409,8 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtNote)
 	if oldNote then
-		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous note: ", oldNote})
+		local caption = (changeType == State.OfficerNoteChange) and "Previous officer note: " or "Previous note: "
+		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {caption, oldNote})
 		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	end
 	
