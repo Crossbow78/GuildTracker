@@ -581,7 +581,7 @@ function GuildTracker:UpdateGuildRoster()
 		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR = GetGuildRosterInfo(i)
 		years, months, days, hours = GetGuildRosterLastOnline(i)
 		
-		lastOnline = online and 0 or (years * 365 + months * 30.417 + days + hours/24)
+		lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
 		
 		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, canSoR))
 	end
