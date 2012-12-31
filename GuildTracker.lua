@@ -1,6 +1,6 @@
 GuildTracker = LibStub("AceAddon-3.0"):NewAddon("GuildTracker", "AceBucket-3.0", "AceEvent-3.0", "AceConsole-3.0", "AceTimer-3.0")
 
-local DB_VERSION = 1
+local DB_VERSION = 2
 
 local ICON_DELETE = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:16:16:0:0:16:16:0:16:0:16|t"
 local ICON_CHAT = "|TInterface\\ChatFrame\\UI-ChatWhisperIcon:16:16:0:0:16:16:0:16:0:16|t"
@@ -8,6 +8,7 @@ local ICON_TIMESTAMP = "|TInterface\\HelpFrame\\HelpIcon-ReportLag:16:16:0:0:16:
 local ICON_TOGGLE = "|TInterface\\Buttons\\UI-%sButton-Up:18:18:1:0|t"
 
 local CLR_YELLOW = "|cffffd200"
+local CLR_DARKYELLOW = "|caaaa9000"
 local CLR_GRAY = "|cffaaaaaa"
 
 local ROSTER_REFRESH_THROTTLE = 10
@@ -18,9 +19,10 @@ local LibQTip = LibStub:GetLibrary("LibQTip-1.0")
 local LDBIcon = LibStub("LibDBIcon-1.0")
 
 --- Some local helper functions
-local tinsert = table.insert
-local tremove = table.remove
-local tsort = table.sort
+local _G = _G
+local tinsert, tremove, tsort = _G.table.insert, _G.table.remove, _G.table.sort
+local pairs, ipairs = _G.pairs, _G.ipairs
+
 local function tcopy(t)
   local u = { }
   if type(t) == 'table' then
@@ -105,7 +107,7 @@ local function getplayertable(...)
 end
 
 -- The available chat types
-local ChatType = { "SAY", "YELL", "GUILD", "OFFICER", "PARTY", "RAID" }
+local ChatType = { "SAY", "YELL", "GUILD", "OFFICER", "PARTY", "RAID", "INSTANCE_CHAT" }
 local ChatFormat = { [1] = "Short", [2] = "Long", [3] = "Full" }
 local TimeFormat = { [1] = "Absolute", [2] = "Relative", [3] = "Intuitive", [4] = "Small" }
 
@@ -118,7 +120,8 @@ local Field = {
 	Note = 5,
 	OfficerNote = 6,
 	LastOnline = 7,
-	SoR = 8,
+	Points = 8,
+	SoR = 9,
 }
 
 -- The types of tracked changes
@@ -132,11 +135,23 @@ local State = {
 	AccountEnabled = 6,
 	Inactive = 7,
 	Active = 8,
-	LevelChange = 9,
+	OfficerNoteChange = 9,	
 	NoteChange = 10,
-	OfficerNoteChange = 11,	
-	NameChange = 12,
+	LevelChange = 11,
+	PointsChange = 12,
+	NameChange = 13,
 }
+
+	local ComboState = {
+		[State.RankUp] = State.RankDown,
+		[State.RankDown] = State.RankUp,
+		[State.AccountDisabled] = State.AccountEnabled,
+		[State.AccountEnabled] = State.AccountDisabled,
+		[State.GuildJoin] = State.GuildLeave,
+		[State.GuildLeave] = State.GuildJoin,
+		[State.Inactive] = State.Active,
+		[State.Active] = State.Inactive
+	}
 
 local StateInfo = {
 	[State.Unchanged] = {
@@ -203,11 +218,11 @@ local StateInfo = {
 		template = "has not logged on for more than %d days",
 	},
 	[State.LevelChange] = {
-		color = RGB2HEX(1,0.95,0.4),
+		color = RGB2HEX(1,0.95,0.45),
 		category = "Level",
 		shorttext = "Level up",
 		longtext = "has gained one or more levels",
-		template = "has gone up %d level%s and is now %d",
+		template = "is now level %d (gained %d)",
 	},
 	[State.NoteChange] = {
 		color = RGB2HEX(0.79,0.58,0.58),
@@ -230,6 +245,13 @@ local StateInfo = {
 		longtext = "had a name change",
 		template = "changed name to \"%s\"",
 	},	
+	[State.PointsChange] = {
+		color = RGB2HEX(1.0,0.72,0.22),
+		category = "Points",
+		shorttext = "Achievement points",
+		longtext = "gained one or more achievements",
+		template = "has now %d achievement points (gained %d)",
+	},
 }
 
 local sorts = {
@@ -240,6 +262,28 @@ local sorts = {
 					return aInfo[Field.Name] < bInfo[Field.Name]
 				end
 				return aInfo[Field.Name] > bInfo[Field.Name]
+		 end,
+	["Points"] = function(a, b)
+				local aInfo = (a.type ~= State.GuildLeave) and a.newinfo or a.oldinfo
+				local bInfo = (b.type ~= State.GuildLeave) and b.newinfo or b.oldinfo
+				if aInfo[Field.Points] and bInfo[Field.Points] and aInfo[Field.Points] ~= bInfo[Field.Points] then
+					if GuildTracker.db.profile.options.tooltip.sort_ascending then
+						return aInfo[Field.Points] < bInfo[Field.Points]
+					end
+					return aInfo[Field.Points] > bInfo[Field.Points]
+				else
+					if a.timestamp ~= b.timestamp then
+						if GuildTracker.db.profile.options.tooltip.sort_ascending then
+							return a.timestamp < b.timestamp
+						end
+						return a.timestamp > b.timestamp
+					else
+						if GuildTracker.db.profile.options.tooltip.sort_ascending then
+							return aInfo[Field.Name] < bInfo[Field.Name]
+						end
+						return aInfo[Field.Name] > bInfo[Field.Name]				
+					end
+				end				
 		 end,
 	["Level"] = function(a, b)
 				local aInfo = (a.type ~= State.GuildLeave) and a.newinfo or a.oldinfo
@@ -523,6 +567,9 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 	
 	-- Alerts for any new changes
 	self:ReportNewChanges()
+
+	-- Merge any similar changes
+	self:MergeChanges()
 	
 	-- Auto expire changes
 	self:AutoExpireChanges()
@@ -564,6 +611,34 @@ function GuildTracker:UpgradeGuildDatabase()
 		self.GuildDB.version = 1
 		self.GuildDB.isOfficer = CanViewOfficerNote()
 	end
+	
+	if self.GuildDB.version == 1 then
+		self:Debug("Upgrading database to version 2")
+		self.GuildDB.version = 2
+		for i = 1, #self.GuildDB.roster do
+			local info = self.GuildDB.roster[i]
+			info[Field.SoR] = info[Field.Points]
+			info[Field.Points] = nil
+		end
+		for i = 1, #self.GuildDB.changes do
+			local change = self.GuildDB.changes[i]
+			if change.type == State.PointsChange then 
+				change.type = State.NameChange -- 12 -> 13
+			elseif change.type == State.LevelChange then
+				change.type = State.OfficerNoteChange -- 11 -> 9
+			elseif change.type == State.OfficerNoteChange then
+				change.type = State.LevelChange -- 9 -> 11
+			end
+			if change.oldinfo then
+				change.oldinfo[Field.SoR] = change.oldinfo[Field.Points]
+				change.oldinfo[Field.Points] = nil
+			end
+			if change.newinfo then
+				change.newinfo[Field.SoR] = change.newinfo[Field.Points]
+				change.newinfo[Field.Points] = nil
+			end
+		end
+	end
 end
 
 --------------------------------------------------------------------------------
@@ -583,7 +658,7 @@ function GuildTracker:UpdateGuildRoster()
 		
 		lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
 		
-		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, canSoR))
+		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR))
 	end
 	
 	self.GuildRoster = players
@@ -620,28 +695,46 @@ function GuildTracker:UpdateGuildChanges()
 		if newPlayerInfo == nil then
 			self:AddGuildChange(State.GuildLeave, info, nil)
 		else
+			-- Rank
 			if newPlayerInfo[Field.Rank] < info[Field.Rank] then
 				self:AddGuildChange(State.RankUp, info, newPlayerInfo)
 			elseif newPlayerInfo[Field.Rank] > info[Field.Rank] then
 				self:AddGuildChange(State.RankDown, info, newPlayerInfo)
-			elseif newPlayerInfo[Field.SoR] and not info[Field.SoR] then
+			end
+			
+			-- Scroll of resurrection
+			if newPlayerInfo[Field.SoR] and not info[Field.SoR] then
 				self:AddGuildChange(State.AccountDisabled, info, newPlayerInfo)
 			elseif not newPlayerInfo[Field.SoR] and info[Field.SoR] then
 				self:AddGuildChange(State.AccountEnabled, info, newPlayerInfo)
-			elseif newPlayerInfo[Field.LastOnline] >= self.db.profile.options.inactive and info[Field.LastOnline] < self.db.profile.options.inactive then				
+			end
+			
+			-- Activity
+			if newPlayerInfo[Field.LastOnline] >= self.db.profile.options.inactive and info[Field.LastOnline] < self.db.profile.options.inactive then				
 				self:AddGuildChange(State.Inactive, info, newPlayerInfo)
 			elseif newPlayerInfo[Field.LastOnline] < self.db.profile.options.inactive and info[Field.LastOnline] >= self.db.profile.options.inactive then				
 				self:AddGuildChange(State.Active, info, newPlayerInfo)
-			elseif newPlayerInfo[Field.Level] ~= info[Field.Level] then
+			end
+			
+			-- Level
+			if newPlayerInfo[Field.Level] ~= info[Field.Level] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
 				self:AddGuildChange(State.LevelChange, info, newPlayerInfo)
-			elseif newPlayerInfo[Field.Note] ~= info[Field.Note] then
+			end
+			
+			-- Achievement Points
+			if info[Field.Points] and newPlayerInfo[Field.Points] ~= info[Field.Points] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
+				self:AddGuildChange(State.PointsChange, info, newPlayerInfo)
+			end
+
+			-- Note
+			if newPlayerInfo[Field.Note] ~= info[Field.Note] then
 				self:AddGuildChange(State.NoteChange, info, newPlayerInfo)
 			end
 			
+			-- Officer note
 			if newPlayerInfo[Field.OfficerNote] ~= info[Field.OfficerNote] and self.GuildDB.isOfficer == CanViewOfficerNote() then
 				 self:AddGuildChange(State.OfficerNoteChange, info, newPlayerInfo)
 			end
-			
 		end
 	end
 	
@@ -757,6 +850,88 @@ function GuildTracker:AddGuildChange(state, oldInfo, newInfo)
 	
 	tinsert(self.GuildDB.changes, newchange)
 end
+
+--------------------------------------------------------------------------------
+function GuildTracker:MergeChanges()
+--------------------------------------------------------------------------------
+	if self.db.profile.options.tooltip.merging then
+		self:MergeStateChanges(State.LevelChange)
+		self:MergeStateChanges(State.PointsChange)
+		self:MergeStateChanges(State.NoteChange)
+		self:MergeStateChanges(State.OfficerNoteChange)
+		self:MergeStateChanges(State.Active)
+		self:MergeStateChanges(State.AccountEnabled)
+		--self:MergeStateChanges(State.GuildJoin)
+		self:MergeStateChanges(State.RankUp)
+		
+		self:SortAndGroupChanges()
+	end
+end
+
+--------------------------------------------------------------------------------
+function GuildTracker:MergeStateChanges(state)
+--------------------------------------------------------------------------------
+	local comboState = ComboState[state]
+	
+	local changes = self.GuildDB.changes
+	if changes and #changes > 0 then
+		for cIdx = 1, #changes do
+			local change = changes[cIdx]
+			if change.type == state or change.type == comboState then
+				for cIdx2 = 1, #changes do
+					if cIdx2 ~= cIdx then
+						local change2 = changes[cIdx2]
+						if (change2.type == state or change2.type == comboState) and change.newinfo and change.newinfo[Field.Name] == change2.newinfo[Field.Name] then
+							self:Debug("Merging changes of type " .. state .. ": " .. cIdx .. "/" .. cIdx2)
+							-- We found two changes of the same (or combo) type and the same name
+							local first, last = change, change2
+							if first.timestamp > last.timestamp then
+								first, last = change2, change
+							end
+							first.newinfo = tcopy(last.newinfo)
+							first.timestamp = last.timestamp
+							
+							if state == State.RankUp or state == State.RankDown then
+								-- In this case we need to determine the net result
+								local newrank = first.newinfo[Field.Rank]
+								local oldrank = first.oldinfo[Field.Rank]
+								if newrank ~= oldrank then
+									self:Debug("Rank change merged")
+									first.type = (newrank < oldrank) and State.RankUp or State.RankDown
+								else
+									self:Debug("Rank change cancelled")
+									first.type = State.Unchanged
+								end
+							elseif state == State.NoteChange or state == State.OfficerNoteChange then
+								-- In this case we need to determine the net result
+								local newnote = (state == State.NoteChange) and first.newinfo[Field.Note] or first.newinfo[Field.OfficerNote]
+								local oldnote = (state == State.NoteChange) and first.oldinfo[Field.Note] or first.oldinfo[Field.OfficerNote]
+								if newnote == oldnote then
+									self:Debug("Note change cancelled")
+									first.type = State.Unchanged
+								else
+									self:Debug("Note change merged")
+								end
+							elseif state == State.AccountDisabled or state == State.AccountEnabled 
+								or state == State.GuildLeave or state == State.GuildJoin
+								or state == State.Inactive or state == State.Active then
+								-- These types cancel each other out
+								first.type = State.Unchanged
+								self:Debug("Change cancelled")
+							else
+								-- Level, Points are simple
+								self:Debug("Change merged")
+							end
+							
+							last.type = State.Unchanged
+						end
+					end
+				end --for
+			end
+		end --for
+	end
+end
+
 	
 --------------------------------------------------------------------------------
 function GuildTracker:GetAlertMessage(change, msgFormat, makelink)
@@ -999,6 +1174,7 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 			if state then
 				if (chat ~= "RAID" or IsInRaid()) and
 					 (chat ~= "PARTY" or IsInGroup()) and
+					 (chat ~= "INSTANCE_CHAT" or IsInInstance()) and
 					 (chat ~= "RAID_WARNING" or UnitIsRaidOfficer("player") or UnitIsRaidLeader("player")) then
 					SendChatMessage(msg, chat)
 				end
@@ -1059,7 +1235,7 @@ function GuildTracker:GetChangeText(change)
 	elseif state == State.LevelChange then
 		local level = change.newinfo[Field.Level]
 		local diff = level - change.oldinfo[Field.Level]
-		template = string.format(template, diff, pluralize(diff), level)
+		template = string.format(template, level, diff)
 	elseif state == State.NoteChange then
 		local oldNote = change.oldinfo[Field.Note]
 		local newNote = change.newinfo[Field.Note]
@@ -1072,6 +1248,10 @@ function GuildTracker:GetChangeText(change)
 		local oldNote = change.oldinfo[Field.OfficerNote]
 		local newNote = change.newinfo[Field.OfficerNote]
 		template = string.format(template, oldNote, newNote)
+	elseif state == State.PointsChange then
+		local points = change.newinfo[Field.Points]
+		local diff = points - change.oldinfo[Field.Points]
+		template = string.format(template, points, diff)
 	end
 
 	return stateColor, shortText, longText, template, category
@@ -1195,13 +1375,13 @@ function GuildTracker:UpdateTooltip()
 	
 	local tooltip = LibQTip:Acquire("GuildTrackerTip")
 	local padding = 10
-	local columns = 10
+	local columns = 11
 	local lineNum, colNum
 	
 	tooltip:Clear()
 	
 	local lineNum, colNum
-	tooltip:SetColumnLayout(columns, "LEFT", "LEFT", "LEFT", "CENTER", "LEFT", "CENTER", "LEFT", "RIGHT", "LEFT", "LEFT")
+	tooltip:SetColumnLayout(columns, "LEFT", "LEFT", "LEFT", "CENTER", "RIGHT", "LEFT", "CENTER", "LEFT", "RIGHT", "LEFT", "LEFT")
 	
 	lineNum = tooltip:AddHeader()
 	tooltip:SetCell(lineNum, 1, "|cfffed100Guild Tracker", tooltip:GetHeaderFont(), "CENTER", tooltip:GetColumnCount())
@@ -1226,6 +1406,7 @@ function GuildTracker:UpdateTooltip()
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Type", nil, nil, nil, nil, 0, padding, nil, 75)
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Name", nil, nil, nil, nil, 0, padding, nil, 75)
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Level", nil, "CENTER", nil, nil, 0, padding, nil, 35)
+	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Points", nil, "RIGHT", nil, nil, 0, padding, nil, 38)
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Rank", nil, nil, nil, nil, 0, padding, nil, 75)
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Offline", nil, "RIGHT", nil, nil, 0, padding, nil, 60)
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Note", nil, nil, nil, nil, 0, padding, 250, 150)
@@ -1244,17 +1425,21 @@ function GuildTracker:UpdateTooltip()
 	tooltip:SetCellScript(lineNum, 4, "OnEnter", ShowSimpleTooltip, "Sort by Level")
 	tooltip:SetCellScript(lineNum, 4, "OnLeave", HideSimpleTooltip)
 
-	tooltip:SetCellScript(lineNum, 5, "OnMouseUp", OnSortHeader, "Rank")
-	tooltip:SetCellScript(lineNum, 5, "OnEnter", ShowSimpleTooltip, "Sort by Rank")
+	tooltip:SetCellScript(lineNum, 5, "OnMouseUp", OnSortHeader, "Points")
+	tooltip:SetCellScript(lineNum, 5, "OnEnter", ShowSimpleTooltip, "Sort by Points")
 	tooltip:SetCellScript(lineNum, 5, "OnLeave", HideSimpleTooltip)
-	
-	tooltip:SetCellScript(lineNum, 6, "OnMouseUp", OnSortHeader, "Offline")
-	tooltip:SetCellScript(lineNum, 6, "OnEnter", ShowSimpleTooltip, "Sort by last online time")
+
+	tooltip:SetCellScript(lineNum, 6, "OnMouseUp", OnSortHeader, "Rank")
+	tooltip:SetCellScript(lineNum, 6, "OnEnter", ShowSimpleTooltip, "Sort by Rank")
 	tooltip:SetCellScript(lineNum, 6, "OnLeave", HideSimpleTooltip)
 	
-	tooltip:SetCellScript(lineNum, 8, "OnMouseUp", OnSortHeader, "Timestamp")
-	tooltip:SetCellScript(lineNum, 8, "OnEnter", ShowSimpleTooltip, "Sort by Timestamp")
-	tooltip:SetCellScript(lineNum, 8, "OnLeave", HideSimpleTooltip)
+	tooltip:SetCellScript(lineNum, 7, "OnMouseUp", OnSortHeader, "Offline")
+	tooltip:SetCellScript(lineNum, 7, "OnEnter", ShowSimpleTooltip, "Sort by last online time")
+	tooltip:SetCellScript(lineNum, 7, "OnLeave", HideSimpleTooltip)
+	
+	tooltip:SetCellScript(lineNum, 9, "OnMouseUp", OnSortHeader, "Timestamp")
+	tooltip:SetCellScript(lineNum, 9, "OnEnter", ShowSimpleTooltip, "Sort by Timestamp")
+	tooltip:SetCellScript(lineNum, 9, "OnLeave", HideSimpleTooltip)
 	
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_CHAT)
@@ -1346,10 +1531,14 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	local clrChange, txtChange = self:GetStateText(changeType)
 	local txtName = RAID_CLASS_COLORS_hex[item[Field.Class]] .. item[Field.Name]
 	local txtLevel = item[Field.Level]
+	local txtPoints = item[Field.Points] or ""
 	local txtRank = GuildControlGetRankName(item[Field.Rank]+1)
 	local txtNote = (changeType == State.OfficerNoteChange) and item[Field.OfficerNote] or item[Field.Note]
 	local txtOffline = self:GetFormattedLastOnline(item[Field.LastOnline])
 	local txtTimestamp, fullTimestamp = self:GetFormattedTimestamp(changeItem.timestamp)
+	
+
+
 
 	-- Override special case
 	if self.db.profile.options.timeformat == 4 then
@@ -1361,6 +1550,7 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	local oldRank = nil
 	local oldNote = nil
 	local oldOffline = nil
+	local oldPoints = nil
 	
 	if changeType == State.RankUp or changeType == State.RankDown then
 		oldRank = GuildControlGetRankName(changeItem.oldinfo[Field.Rank]+1)
@@ -1373,12 +1563,28 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 		txtLevel = CLR_YELLOW .. txtLevel
 	elseif changeType == State.NoteChange then
 		oldNote = changeItem.oldinfo[Field.Note]
-		txtNote = CLR_YELLOW .. txtNote
+		if oldNote == "" then
+			oldNote = CLR_GRAY .. "(empty)"
+		end
+		if txtNote == "" then
+			txtNote = CLR_DARKYELLOW .. "(empty)"
+		else
+			txtNote = CLR_YELLOW .. txtNote
+		end
 	elseif changeType == State.NameChange then
 		oldName = changeItem.oldinfo[Field.Name]
 	elseif changeType == State.OfficerNoteChange then
 		oldNote = changeItem.oldinfo[Field.OfficerNote]
 		txtNote = CLR_YELLOW .. txtNote
+	elseif changeType == State.PointsChange then
+		if changeItem.oldinfo[Field.Points] then
+			oldPoints = changeItem.oldinfo[Field.Points] .. string.format(CLR_GRAY .. " (%s%d)", (item[Field.Points] > changeItem.oldinfo[Field.Points]) and "+" or "-", math.abs(item[Field.Points] - changeItem.oldinfo[Field.Points]))
+			txtPoints = CLR_YELLOW .. txtPoints
+		end
+	end
+	
+	if txtNote == "" then
+		txtNote = CLR_GRAY .. "(empty)"
 	end
 
 	lineNum = tooltip:AddLine()
@@ -1395,6 +1601,11 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous level:", oldLevel})
 		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	end
+	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtPoints)
+	if oldPoints then
+		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous points:", oldPoints})
+		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+	end	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtRank)
 	if oldRank then
 		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous rank: ", oldRank})
@@ -1599,6 +1810,7 @@ function GuildTracker:GetDefaults()
 				autoexpire = false,
 				expiretime = 3,
 				inactive = 30,
+				minlevel = 20,
 				timeformat = 2,
 				minimap = {
 					hide = true,
@@ -1620,8 +1832,11 @@ function GuildTracker:GetDefaults()
 					[9] = true,
 					[10] = true,
 					[11] = true,
+					[12] = true,
+					[13] = true,
 				},				
 				tooltip = {
+					merging = false,
 					grouping = false,
 					sorting = "Timestamp",
 					sort_ascending = true,
@@ -1741,6 +1956,16 @@ function GuildTracker:GetOptions()
 								get = function(key) return self.db.profile.options.tooltip.grouping end,
 								set = function(key, value) self.db.profile.options.tooltip.grouping = value end,
 							},					
+							merging = {
+								name = CLR_YELLOW .. "Merge similar changes",
+								desc = "Merge multiple changes of the same type into a single entry",
+								descStyle = "inline",
+								type = "toggle",
+								width = "full",
+								order = 1,
+								get = function(key) return self.db.profile.options.tooltip.merging end,
+								set = function(key, value) self.db.profile.options.tooltip.merging = value end,							
+							},
 							autoreset = {
 								name = CLR_YELLOW .. "Auto-clear each session",
 								desc = "Automatically clear all changes on logout or UI reload",
@@ -1803,7 +2028,19 @@ function GuildTracker:GetOptions()
 								bigStep = 5,
 								get = function(key) return self.db.profile.options.inactive end,
 								set = function(key, value) self.db.profile.options.inactive = value end,
-							},							
+							},
+							minlevel = {
+								name = "Minimum level",
+								desc = "Set the minimum level to report changes in level or achievement points",
+								type = "range",
+								order = 22,
+								min = 0,
+								max = GetMaxPlayerLevel(),
+								step = 1,
+								bigStep = 5,
+								get = function(key) return self.db.profile.options.minlevel end,
+								set = function(key, value) self.db.profile.options.minlevel = value end,
+							},
 						},
 					},
 					alertsgroup = {
