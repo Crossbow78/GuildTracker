@@ -20,7 +20,7 @@ local LDBIcon = LibStub("LibDBIcon-1.0")
 
 --- Some local helper functions
 local _G = _G
-local tinsert, tremove, tsort = _G.table.insert, _G.table.remove, _G.table.sort
+local tinsert, tremove, tsort, twipe = _G.table.insert, _G.table.remove, _G.table.sort, _G.table.wipe
 local pairs, ipairs = _G.pairs, _G.ipairs
 
 local function tcopy(t)
@@ -110,6 +110,10 @@ end
 local ChatType = { "SAY", "YELL", "GUILD", "OFFICER", "PARTY", "RAID", "INSTANCE_CHAT" }
 local ChatFormat = { [1] = "Short", [2] = "Long", [3] = "Full" }
 local TimeFormat = { [1] = "Absolute", [2] = "Relative", [3] = "Intuitive", [4] = "Small" }
+
+-- These are name lookup lists
+local GuildRoster_reverse = {}
+local SavedRoster_reverse = {}
 
 -- The guild information fields we store
 local Field = {
@@ -465,7 +469,6 @@ function GuildTracker:Toggle()
 	end
 end
 
-
 --------------------------------------------------------------------------------	
 function GuildTracker:Refresh()
 --------------------------------------------------------------------------------	
@@ -477,7 +480,6 @@ function GuildTracker:Refresh()
 	end
 end
 
-
 --------------------------------------------------------------------------------
 function GuildTracker:StartUpdateTimer()
 --------------------------------------------------------------------------------
@@ -486,7 +488,6 @@ function GuildTracker:StartUpdateTimer()
 		self.timerGuildUpdate = self:ScheduleRepeatingTimer("Refresh", ROSTER_REFRESH_TIMER)		
 	end
 end
-
 
 --------------------------------------------------------------------------------
 function GuildTracker:StopUpdateTimer()
@@ -545,8 +546,13 @@ end
 function GuildTracker:GUILD_ROSTER_UPDATE()
 --------------------------------------------------------------------------------
 	self:Debug("GUILD_ROSTER_UPDATE")
-	self.LastRosterUpdate = time()
+	if InCombatLockdown() and not self.db.profile.options.scanincombat then
+		self:Debug("Not scanning in combat")
+		return
+	end
 	
+	self.LastRosterUpdate = time()
+
 	self.GuildName = GetGuildInfo("player")
 	if self.GuildName == nil then
 		self:Debug("WARNING: no guildname available!")
@@ -555,10 +561,10 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 	
 	-- Switch to our current guild database, and initialize if needed
 	self:InitGuildDatabase()
-	
+
 	-- Load current guild roster into self.GuildRoster
 	self:UpdateGuildRoster()
-	
+
 	-- Find changes between the saved roster and the current guild roster
 	self:UpdateGuildChanges()
 	
@@ -649,6 +655,7 @@ function GuildTracker:UpdateGuildRoster()
 	local hours, days, months, years, lastOnline
 	
 	local players = recycleplayertable(self.GuildRoster)
+	twipe(GuildRoster_reverse)
 	
 	self:Debug(string.format("Scanning %d guild members", numGuildMembers))
 	
@@ -659,6 +666,9 @@ function GuildTracker:UpdateGuildRoster()
 		lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
 		
 		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR))
+		
+		-- Keep our reverse lookup table in sync
+		GuildRoster_reverse[name] = #players
 	end
 	
 	self.GuildRoster = players
@@ -686,11 +696,14 @@ function GuildTracker:UpdateGuildChanges()
 	end
 	
 	self:Debug("Detecting guild changes")
+
+	-- Sync our name lookup table
+	self:FixReverseTable(oldRoster, SavedRoster_reverse)
 	
 	-- First update the existing entries of our SavedRoster
 	for i = 1, #oldRoster do
 		local info = oldRoster[i]
-		local newPlayerInfo = self:FindPlayerByName(self.GuildRoster, info[Field.Name])
+		local newPlayerInfo = self:FindPlayerByName(self.GuildRoster, info[Field.Name], GuildRoster_reverse)
 		
 		if newPlayerInfo == nil then
 			self:AddGuildChange(State.GuildLeave, info, nil)
@@ -741,7 +754,7 @@ function GuildTracker:UpdateGuildChanges()
 	-- Then add any new entries
 	for i = 1, #self.GuildRoster do
 		local info = self.GuildRoster[i]
-		local oldPlayerInfo = self:FindPlayerByName(oldRoster, info[Field.Name])
+		local oldPlayerInfo = self:FindPlayerByName(oldRoster, info[Field.Name], SavedRoster_reverse)
 		if oldPlayerInfo == nil then
 			self:AddGuildChange(State.GuildJoin, nil, info)
 		end
@@ -750,7 +763,6 @@ function GuildTracker:UpdateGuildChanges()
 	self:SortAndGroupChanges()
 	self:DetectNameChanges()
 end
-
 
 --------------------------------------------------------------------------------	
 function GuildTracker:SortAndGroupChanges()
@@ -973,7 +985,7 @@ function GuildTracker:SaveGuildRoster()
 		local info = self.GuildDB.roster[idx]
 		self.GuildDB.roster[lastusedIdx] = info
 		
-		local newPlayerInfo = self:FindPlayerByName(self.GuildRoster, info[Field.Name])	
+		local newPlayerInfo = self:FindPlayerByName(self.GuildRoster, info[Field.Name], GuildRoster_reverse)	
 		if newPlayerInfo ~= nil then
 			lastusedIdx = lastusedIdx + 1
 			updated = updated + 1
@@ -987,10 +999,12 @@ function GuildTracker:SaveGuildRoster()
 		self.GuildDB.roster[idx] = nil
 	end
 	
+	self:FixReverseTable(self.GuildDB.roster, SavedRoster_reverse)
+	
 	-- Add any new roster entries
 	for idx = 1, #self.GuildRoster do
 		local info = self.GuildRoster[idx]
-		local oldPlayerInfo = self:FindPlayerByName(self.GuildDB.roster, info[Field.Name])
+		local oldPlayerInfo = self:FindPlayerByName(self.GuildDB.roster, info[Field.Name], SavedRoster_reverse)
 		if oldPlayerInfo == nil then
 			added = added + 1
 			local newInfo = tcopy(info)
@@ -1036,15 +1050,33 @@ function GuildTracker:ReportNewChanges()
 end
 
 --------------------------------------------------------------------------------
-function GuildTracker:FindPlayerByName(list, name)
+function GuildTracker:FindPlayerByName(list, name, lookuplist)
 --------------------------------------------------------------------------------
-	for i = 1, #list do
-		local info = list[i]
-		if info[Field.Name] == name then
-			return info
+	if lookuplist then
+		local idx = lookuplist[name]
+		if idx then
+			return list[idx]
+		end
+	else
+		for i = 1, #list do
+			local info = list[i]
+			if info[Field.Name] == name then
+				return info
+			end
 		end
 	end
 	return nil
+end
+
+--------------------------------------------------------------------------------	
+function GuildTracker:FixReverseTable(inputtable, reversetable)
+--------------------------------------------------------------------------------	
+	twipe(reversetable)
+	for i = 1, #inputtable do
+		local info = inputtable[i]
+		reversetable[info[Field.Name]] = i
+	end
+	return reversetable
 end
 
 --------------------------------------------------------------------------------
@@ -1807,6 +1839,7 @@ function GuildTracker:GetDefaults()
 			options = {
 				autoreset = false,
 				autorefresh = true,
+				scanincombat = false,
 				autoexpire = false,
 				expiretime = 3,
 				inactive = 30,
@@ -1910,6 +1943,16 @@ function GuildTracker:GetOptions()
 							self:PLAYER_GUILD_UPDATE()
 						end,
 				 	},
+				 	scanincombat = {
+						name = CLR_YELLOW .. "Allow scanning during combat",
+						desc = "Guild roster change detection will continue even while in combat",
+						descStyle = "inline",
+						type = "toggle",
+						width = "full",						
+						order = 2,
+						get = function(key) return self.db.profile.options.scanincombat	end,
+						set = function(key, value) self.db.profile.options.scanincombat = value end,
+				 	},				 	
 					minimap = {
 						name = CLR_YELLOW .. "Minimap icon",
 						desc = "Display a separate minimap icon",
