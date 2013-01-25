@@ -9,7 +9,7 @@ local ICON_TOGGLE = "|TInterface\\Buttons\\UI-%sButton-Up:18:18:1:0|t"
 
 local CLR_YELLOW = "|cffffd200"
 local CLR_DARKYELLOW = "|caaaa9000"
-local CLR_GRAY = "|cffaaaaaa"
+local CLR_GRAY = "|cff909090"
 
 local ROSTER_REFRESH_THROTTLE = 10
 local ROSTER_REFRESH_TIMER = 30
@@ -396,7 +396,7 @@ local sorts = {
 }
 
 StaticPopupDialogs["GUILDTRACKER_REMOVEALL"] = {
-	preferredIndex = 3,  -- avoid some UI taint, see http://www.wowace.com/announcements/how-to-avoid-some-ui-taint/
+	preferredIndex = STATICPOPUP_NUMDIALOGS,  -- avoid some UI taint, see http://www.wowace.com/announcements/how-to-avoid-some-ui-taint/
   text = "Are you sure you want to remove all changes?",
   button1 = "Yes",
   button2 = "No",
@@ -1252,8 +1252,12 @@ function GuildTracker:GetChangeText(change)
 	local stateColor, shortText, longText, template, category = self:GetStateText(state)
 	
 	if state == State.GuildJoin or state == State.GuildLeave then
-		local note = ((state == State.GuildJoin) and change.newinfo[Field.Note] or change.oldinfo[Field.Note]) or ""
-		template = string.format(template, note)	
+		local noteField, note = Field.Note
+		if self.GuildDB.isOfficer and self.db.profile.options.alerts.preferofficernote then
+			noteField = Field.OfficerNote
+		end
+		note = ((state == State.GuildJoin) and change.newinfo[noteField] or change.oldinfo[noteField]) or ""
+		template = string.format(template, note)
 	elseif state == State.RankUp or state == State.RankDown then
 		local oldRank = GuildControlGetRankName(change.oldinfo[Field.Rank]+1)
 		local newRank = GuildControlGetRankName(change.newinfo[Field.Rank]+1)
@@ -1560,17 +1564,19 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 		item = changeItem.oldinfo
 	end
 
+	local noteField = Field.Note
+	if changeType == State.OfficerNoteChange or (changeType ~= State.NoteChange and self.GuildDB.isOfficer and self.db.profile.options.alerts.preferofficernote) then
+		noteField = Field.OfficerNote
+	end
+
 	local clrChange, txtChange = self:GetStateText(changeType)
 	local txtName = RAID_CLASS_COLORS_hex[item[Field.Class]] .. item[Field.Name]
 	local txtLevel = item[Field.Level]
 	local txtPoints = item[Field.Points] or ""
 	local txtRank = GuildControlGetRankName(item[Field.Rank]+1)
-	local txtNote = (changeType == State.OfficerNoteChange) and item[Field.OfficerNote] or item[Field.Note]
+	local txtNote = item[noteField]
 	local txtOffline = self:GetFormattedLastOnline(item[Field.LastOnline])
 	local txtTimestamp, fullTimestamp = self:GetFormattedTimestamp(changeItem.timestamp)
-	
-
-
 
 	-- Override special case
 	if self.db.profile.options.timeformat == 4 then
@@ -1603,11 +1609,18 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 		else
 			txtNote = CLR_YELLOW .. txtNote
 		end
-	elseif changeType == State.NameChange then
-		oldName = changeItem.oldinfo[Field.Name]
 	elseif changeType == State.OfficerNoteChange then
 		oldNote = changeItem.oldinfo[Field.OfficerNote]
-		txtNote = CLR_YELLOW .. txtNote
+		if oldNote == "" then
+			oldNote = CLR_GRAY .. "(empty)"
+		end
+		if txtNote == "" then
+			txtNote = CLR_DARKYELLOW .. "(empty)"
+		else
+			txtNote = CLR_YELLOW .. txtNote
+		end
+	elseif changeType == State.NameChange then
+		oldName = changeItem.oldinfo[Field.Name]
 	elseif changeType == State.PointsChange then
 		if changeItem.oldinfo[Field.Points] then
 			oldPoints = changeItem.oldinfo[Field.Points] .. string.format(CLR_GRAY .. " (%s%d)", (item[Field.Points] > changeItem.oldinfo[Field.Points]) and "+" or "-", math.abs(item[Field.Points] - changeItem.oldinfo[Field.Points]))
@@ -1851,6 +1864,7 @@ function GuildTracker:GetDefaults()
 				alerts = {
 					sound = true,
 					chatmessage = true,
+					preferofficernote = false,
 					messageformat = 3,
 				},
 				filter = {
@@ -2112,6 +2126,19 @@ function GuildTracker:GetOptions()
 								get = function(key) return self.db.profile.options.alerts.chatmessage end,
 								set = function(key, value) self.db.profile.options.alerts.chatmessage = value end,
 							},
+							preferofficernote = {
+								name = function()
+									return (CanViewOfficerNote() and CLR_YELLOW or "").. "Prefer officer notes"
+								end,							
+								desc = "By default, display officer notes instead of public notes",
+								descStyle = "inline",
+								disabled = function() return not CanViewOfficerNote() end,
+								type = "toggle",
+								width = "full",
+								order = 3,
+								get = function(key) return self.db.profile.options.alerts.preferofficernote end,
+								set = function(key, value) self.db.profile.options.alerts.preferofficernote = value end,
+							},
 							messageformat = {
 								name = "Message format",
 								desc = function()
@@ -2127,7 +2154,7 @@ function GuildTracker:GetOptions()
 								end,
 								type = "select",
 								disabled = function() return not self.db.profile.options.alerts.chatmessage end,
-								order = 3,
+								order = 4,
 								values = function() return self:GetTableValues(ChatFormat) end,
 								get = function(key) return self.db.profile.options.alerts.messageformat end,
 								set = function(key, value) self.db.profile.options.alerts.messageformat = value end,
