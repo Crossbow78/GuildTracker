@@ -1,6 +1,6 @@
 GuildTracker = LibStub("AceAddon-3.0"):NewAddon("GuildTracker", "AceBucket-3.0", "AceEvent-3.0", "AceConsole-3.0", "AceTimer-3.0")
 
-local DB_VERSION = 2
+local DB_VERSION = 3
 
 local ICON_DELETE = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:16:16:0:0:16:16:0:16:0:16|t"
 local ICON_CHAT = "|TInterface\\ChatFrame\\UI-ChatWhisperIcon:16:16:0:0:16:16:0:16:0:16|t"
@@ -13,6 +13,7 @@ local CLR_GRAY = "|cff909090"
 
 local ROSTER_REFRESH_THROTTLE = 10
 local ROSTER_REFRESH_TIMER = 30
+local CHANGE_LIMIT = 50
 
 local LDB = LibStub("LibDataBroker-1.1")
 local LibQTip = LibStub:GetLibrary("LibQTip-1.0")
@@ -106,6 +107,15 @@ local function getplayertable(...)
 	return t
 end
 
+local function sanitizeName(name)
+	local hyphen = strfind(name, "-")
+	if hyphen ~= nil then
+		name = strsub(name, 1, hyphen - 1)
+	end
+	return name
+end
+
+
 -- The available chat types
 local ChatType = { "SAY", "YELL", "GUILD", "OFFICER", "PARTY", "RAID", "INSTANCE_CHAT" }
 local ChatFormat = { [1] = "Short", [2] = "Long", [3] = "Full" }
@@ -126,6 +136,7 @@ local Field = {
 	LastOnline = 7,
 	Points = 8,
 	SoR = 9,
+	RepStanding = 10,
 }
 
 -- The types of tracked changes
@@ -144,6 +155,7 @@ local State = {
 	LevelChange = 11,
 	PointsChange = 12,
 	NameChange = 13,
+	RepChange = 14,
 }
 
 	local ComboState = {
@@ -242,19 +254,26 @@ local StateInfo = {
 		longtext = "got a new officer note",
 		template = "officer note changed from \"%s\" to \"%s\"",
 	},	
-	[State.NameChange] = {
-		color = RGB2HEX(0.3,0.75,0.3),
-		category = "Name",
-		shorttext = "Name change",
-		longtext = "had a name change",
-		template = "changed name to \"%s\"",
-	},	
 	[State.PointsChange] = {
 		color = RGB2HEX(1.0,0.72,0.22),
 		category = "Points",
 		shorttext = "Achievement points",
 		longtext = "gained one or more achievements",
 		template = "has now %d achievement points (gained %d)",
+	},
+	[State.NameChange] = {
+		color = RGB2HEX(0.15,0.65,0.15),
+		category = "Name",
+		shorttext = "Name change",
+		longtext = "had a name change",
+		template = "changed name to \"%s\"",
+	},	
+	[State.RepChange] = {
+		color = RGB2HEX(0.35,0.82,0.48),
+		category = "Reputation",
+		shorttext = "Guild reputation",
+		longtext = "has gone up in guild reputation standing",
+		template = "has become %s with the guild",
 	},
 }
 
@@ -645,13 +664,22 @@ function GuildTracker:UpgradeGuildDatabase()
 			end
 		end
 	end
+	
+	if self.GuildDB.version == 2 then
+		self:Debug("Upgrading database to version 3")
+		self.GuildDB.version = 3
+		for i = 1, #self.GuildDB.roster do
+			local info = self.GuildDB.roster[i]
+			info[Field.Name] = sanitizeName(info[Field.Name])
+		end
+	end
 end
 
 --------------------------------------------------------------------------------
 function GuildTracker:UpdateGuildRoster()
 --------------------------------------------------------------------------------
 	local numGuildMembers = GetNumGuildMembers()
-	local name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR
+	local name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR, repStanding
 	local hours, days, months, years, lastOnline
 	
 	local players = recycleplayertable(self.GuildRoster)
@@ -660,12 +688,14 @@ function GuildTracker:UpdateGuildRoster()
 	self:Debug(string.format("Scanning %d guild members", numGuildMembers))
 	
 	for i = 1, numGuildMembers, 1 do
-		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR = GetGuildRosterInfo(i)
+		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR, repStanding = GetGuildRosterInfo(i)
+		name = sanitizeName(name)
+		
 		years, months, days, hours = GetGuildRosterLastOnline(i)
 		
 		lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
 		
-		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR))
+		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR, repStanding))
 		
 		-- Keep our reverse lookup table in sync
 		GuildRoster_reverse[name] = #players
@@ -747,6 +777,10 @@ function GuildTracker:UpdateGuildChanges()
 			-- Officer note
 			if newPlayerInfo[Field.OfficerNote] ~= info[Field.OfficerNote] and self.GuildDB.isOfficer == CanViewOfficerNote() then
 				 self:AddGuildChange(State.OfficerNoteChange, info, newPlayerInfo)
+			end
+			
+			if info[Field.RepStanding] and newPlayerInfo[Field.RepStanding] ~= info[Field.RepStanding] then
+				self:AddGuildChange(State.RepChange, info, newPlayerInfo)
 			end
 		end
 	end
@@ -1288,6 +1322,9 @@ function GuildTracker:GetChangeText(change)
 		local points = change.newinfo[Field.Points]
 		local diff = points - change.oldinfo[Field.Points]
 		template = string.format(template, points, diff)
+	elseif state == State.RepChange then
+		local newStandingId = change.newinfo[Field.RepStanding]
+		template = string.format(template, getglobal("FACTION_STANDING_LABEL"..newStandingId))
 	end
 
 	return stateColor, shortText, longText, template, category
@@ -1517,6 +1554,9 @@ function GuildTracker:UpdateTooltip()
 						for _,changeIdx in ipairs(changeList) do
 							local change = self.GuildDB.changes[changeIdx]
 							lineNum = self:AddChangeItemToTooltip(change, tooltip, changeIdx)
+							if lineNum >= CHANGE_LIMIT then
+							  break
+							end
 						end
 					end
 					
@@ -1525,12 +1565,20 @@ function GuildTracker:UpdateTooltip()
 				tooltip:SetCell(headerLineNum, 1, string.format(ICON_TOGGLE, (not self.db.profile.options.tooltip.panel[stateidx]) and "Plus" or "Minus"), "LEFT")
 				tooltip:SetLineScript(headerLineNum, "OnMouseDown", OnToggleButton, stateidx)
 			end
+			
+			if lineNum >= CHANGE_LIMIT then
+			  break
+			end
 		end
 		
 	else
 	
 		for idx,change in ipairs(self.GuildDB.changes) do
 			lineNum = self:AddChangeItemToTooltip(change, tooltip, idx)
+			
+			if lineNum >= CHANGE_LIMIT then
+			  break
+			end
 		end
 		
 	end
@@ -1827,7 +1875,7 @@ function GuildTracker:ApplyTest()
 	local testitem5 = self:FindPlayerByName(self.GuildRoster, "Ironica")
 	testitem5[Field.Name] = "Orinaci"
 	
-	tremove(self.GuildRoster, 1)
+	--tremove(self.GuildRoster, 1)
 	
 	self:UpdateGuildChanges()
 	self:SaveGuildRoster()
@@ -1881,6 +1929,7 @@ function GuildTracker:GetDefaults()
 					[11] = true,
 					[12] = true,
 					[13] = true,
+					[14] = false,
 				},				
 				tooltip = {
 					merging = false,
