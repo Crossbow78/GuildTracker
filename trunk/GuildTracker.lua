@@ -110,7 +110,9 @@ end
 local function sanitizeName(name)
 	local hyphen = strfind(name, "-")
 	if hyphen ~= nil then
-		name = strsub(name, 1, hyphen - 1)
+	  if strsub(name, hyphen + 1) == GetRealmName() then
+			name = strsub(name, 1, hyphen - 1)
+		end
 	end
 	return name
 end
