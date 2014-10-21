@@ -1,8 +1,8 @@
-## Interface: 50400
+## Interface: 60000
 ## Title: Guild Tracker
-## Notes: Keeps track of changes in the guild roster between logins, and also shows who disabled their account
+## Notes: Keeps track of changes in the guild roster between logins
 ## Author: Dracula
-## Version: 5.4.8-1
+## Version: 6.0.2-1
 ## SavedVariables: GuildTrackerDB
 
 embeds.xml
