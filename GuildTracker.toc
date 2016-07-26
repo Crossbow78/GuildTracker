@@ -2,7 +2,7 @@
 ## Title: Guild Tracker
 ## Notes: Keeps track of changes in the guild roster between logins
 ## Author: Dracula
-## Version: 7.0.3-0
+## Version: 7.0.3-1
 ## SavedVariables: GuildTrackerDB
 
 embeds.xml
