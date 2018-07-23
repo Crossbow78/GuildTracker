@@ -1,4 +1,4 @@
-GuildTracker = LibStub("AceAddon-3.0"):NewAddon("GuildTracker", "AceBucket-3.0", "AceEvent-3.0", "AceConsole-3.0", "AceTimer-3.0")
+GuildTracker = LibStub("AceAddon-3.0"):NewAddon("GuildTracker", "AceEvent-3.0", "AceConsole-3.0", "AceTimer-3.0")
 
 local DB_VERSION = 3
 
@@ -536,9 +536,7 @@ function GuildTracker:PLAYER_GUILD_UPDATE(event, unit)
 	if unit and unit ~= "player" then return end
 	
 	if IsInGuild() then
-		if not self.bucket_GUILD_ROSTER_UPDATE then
-			self.bucket_GUILD_ROSTER_UPDATE = self:RegisterBucketEvent("GUILD_ROSTER_UPDATE", 1)
-		end
+		self:RegisterEvent("GUILD_ROSTER_UPDATE")
 		
 		if self.db.profile.options.autorefresh then
 			self:StartUpdateTimer()
@@ -557,9 +555,7 @@ function GuildTracker:PLAYER_GUILD_UPDATE(event, unit)
 		self:UpdateLDB()
 		self:StopUpdateTimer()
 
-		if self.bucket_GUILD_ROSTER_UPDATE then
-			self:UnregisterBucket(self.bucket_GUILD_ROSTER_UPDATE)
-		end
+		self:UnregisterEvent("GUILD_ROSTER_UPDATE")
 	end
 end
 
