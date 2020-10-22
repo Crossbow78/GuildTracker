@@ -495,7 +495,7 @@ function GuildTracker:Refresh()
 --------------------------------------------------------------------------------	
 	if time() - self.LastRosterUpdate > ROSTER_REFRESH_THROTTLE then
 		self:Debug("Refresh requested")
-		GuildRoster()
+		C_GuildInfo.GuildRoster()
 	else
 		self:Debug("Refresh requested, but throttled")
 	end
@@ -632,7 +632,7 @@ function GuildTracker:UpgradeGuildDatabase()
 	if self.GuildDB.version == nil then
 		self:Debug("Upgrading database to version 1")
 		self.GuildDB.version = 1
-		self.GuildDB.isOfficer = CanViewOfficerNote()
+		self.GuildDB.isOfficer = C_GuildInfo:CanViewOfficerNote()
 	end
 	
 	if self.GuildDB.version == 1 then
@@ -773,7 +773,7 @@ function GuildTracker:UpdateGuildChanges()
 			end
 			
 			-- Officer note
-			if newPlayerInfo[Field.OfficerNote] ~= info[Field.OfficerNote] and self.GuildDB.isOfficer == CanViewOfficerNote() then
+			if newPlayerInfo[Field.OfficerNote] ~= info[Field.OfficerNote] and self.GuildDB.isOfficer == C_GuildInfo:CanViewOfficerNote() then
 				 self:AddGuildChange(State.OfficerNoteChange, info, newPlayerInfo)
 			end
 			
@@ -1045,7 +1045,7 @@ function GuildTracker:SaveGuildRoster()
 	end
 	
 	self.GuildDB.updated = self.LastRosterUpdate
-	self.GuildDB.isOfficer = CanViewOfficerNote()
+	self.GuildDB.isOfficer = C_GuildInfo:CanViewOfficerNote()
 	
 	self:Debug(string.format("Roster: %d added, %d removed, %d updated", added, removed, updated))
 end
@@ -2175,11 +2175,11 @@ function GuildTracker:GetOptions()
 							},
 							preferofficernote = {
 								name = function()
-									return (CanViewOfficerNote() and CLR_YELLOW or "").. "Prefer officer notes"
+									return (C_GuildInfo:CanViewOfficerNote() and CLR_YELLOW or "").. "Prefer officer notes"
 								end,							
 								desc = "By default, display officer notes instead of public notes",
 								descStyle = "inline",
-								disabled = function() return not CanViewOfficerNote() end,
+								disabled = function() return not C_GuildInfo:CanViewOfficerNote() end,
 								type = "toggle",
 								width = "full",
 								order = 3,
@@ -2286,7 +2286,7 @@ end
 function GuildTracker:GetCustomChannelList()
 	local channels = { GetChannelList() }
 	local out = {}
-	for i = 1, table.getn(channels), 2 do
+	for i = 1, table.getn(channels), 3 do
 		out[channels[i]] = channels[i] .. ". " .. channels[i+1]
 	end
 	return out
