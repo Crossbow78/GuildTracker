@@ -1,8 +1,8 @@
-## Interface: 90001
+## Interface: 90105
 ## Title: Guild Tracker
 ## Notes: Keeps track of changes in the guild roster between logins
 ## Author: Dracula
-## Version: 9.0.1-1
+## Version: 9.1.5-1
 ## SavedVariables: GuildTrackerDB
 
 embeds.xml
