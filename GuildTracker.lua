@@ -160,16 +160,16 @@ local State = {
 	RepChange = 14,
 }
 
-	local ComboState = {
-		[State.RankUp] = State.RankDown,
-		[State.RankDown] = State.RankUp,
-		[State.AccountDisabled] = State.AccountEnabled,
-		[State.AccountEnabled] = State.AccountDisabled,
-		[State.GuildJoin] = State.GuildLeave,
-		[State.GuildLeave] = State.GuildJoin,
-		[State.Inactive] = State.Active,
-		[State.Active] = State.Inactive
-	}
+local ComboState = {
+	[State.RankUp] = State.RankDown,
+	[State.RankDown] = State.RankUp,
+	[State.AccountDisabled] = State.AccountEnabled,
+	[State.AccountEnabled] = State.AccountDisabled,
+	[State.GuildJoin] = State.GuildLeave,
+	[State.GuildLeave] = State.GuildJoin,
+	[State.Inactive] = State.Active,
+	[State.Active] = State.Inactive
+}
 
 local StateInfo = {
 	[State.Unchanged] = {
@@ -552,6 +552,7 @@ function GuildTracker:PLAYER_GUILD_UPDATE(event, unit)
 		self:Debug("Not in guild, unloading database")
 		self.GuildDB = nil
 		self.GuildName = nil
+		self.GuildRealm = nil
 		self:UpdateLDB()
 		self:StopUpdateTimer()
 
@@ -574,10 +575,14 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 		return
 	end
 	
-	self.GuildName = GetGuildInfo("player")
+	self.GuildName, _, _, self.GuildRealm = GetGuildInfo("player")
 	if self.GuildName == nil then
 		self:Debug("WARNING: no guildname available!")
 		return
+	end
+
+	if self.GuildRealm == nil then
+		self.GuildRealm = GetRealmName()
 	end
 
 	self.LastRosterUpdate = time()
@@ -607,27 +612,36 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 	self:UpdateLDB()
 end
 
-
 -- PRE: IsInGuild() == true and self.GuildName ~= nil
 --------------------------------------------------------------------------------
 function GuildTracker:InitGuildDatabase()
 --------------------------------------------------------------------------------	
 	local guildname = self.GuildName
+	local guildrealm = self.GuildRealm
 
 	-- If necessary, initialize guild database for first use
-	if self.db.realm.guild[guildname] == nil then
-		self:Print(string.format("Creating new database for guild '%s'", guildname))
-		self.db.realm.guild[guildname] = {
-			updated = time(),
-			version = DB_VERSION,
-			roster = {},
-			changes = {}
-		}
+	if self.db.global.guild[guildrealm] == nil then
+		self.db.global.guild[guildrealm] = {}
+	end
+	if self.db.global.guild[guildrealm][guildname] == nil then
+		if (self.db.realm.guild[guildname] ~= nil) then
+			self:Print(string.format("Migrating guild database for '%s' at realm '%s'", guildname, guildrealm))
+			self.db.global.guild[guildrealm][guildname]	= self.db.realm.guild[guildname]
+			self.db.realm = nil
+		else
+			self:Print(string.format("Creating new database for guild '%s' at realm '%s'", guildname, guildrealm))
+			self.db.global.guild[guildrealm][guildname] = {
+				updated = time(),
+				version = DB_VERSION,
+				roster = {},
+				changes = {}
+			}
+		end
 	else
-		self:Debug(string.format("Using existing database for guild '%s'", guildname))
+		self:Debug(string.format("Using existing database for guild '%s' at realm '%s'", guildname, guildrealm))
 	end
 	
-	self.GuildDB = self.db.realm.guild[guildname]
+	self.GuildDB = self.db.global.guild[guildrealm][guildname]
 	
 	self:UpgradeGuildDatabase()
 end
@@ -1084,7 +1098,7 @@ function GuildTracker:ReportNewChanges()
 	if newChanges then
 		-- Sound alert
 		if self.db.profile.options.alerts.sound then
-			PlaySoundFile("Sound\\Interface\\AlarmClockWarning1.wav")
+			PlaySound(567436) -- AlarmClockWarning1
 		end
 	end
 end
