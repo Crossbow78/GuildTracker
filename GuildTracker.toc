@@ -1,9 +1,10 @@
-## Interface: 90105
+## Interface: 110005
 ## Title: Guild Tracker
 ## Notes: Keeps track of changes in the guild roster between logins
 ## Author: Dracula
-## Version: 9.1.5-1
+## Version: 11.0.5-beta.1
 ## SavedVariables: GuildTrackerDB
+## IconTexture: Interface\AddOns\GuildTracker\GuildTracker.tga
 
 embeds.xml
 GuildTracker.lua

@@ -67,7 +67,7 @@ end
 local function do_OnEnter(frame)
 	local tooltip = LibQTip:Acquire("GuildTrackerTip")
 	tooltip:SmartAnchorTo(frame)
-	tooltip:SetAutoHideDelay(0.2, frame)
+	tooltip:SetAutoHideDelay(0.5, frame)
 	tooltip:EnableMouse(true)
 
 	GuildTracker:UpdateTooltip()
@@ -80,7 +80,7 @@ end
 local function do_OnClick(frame, button)
 	--print(button)
 	if button == "RightButton" then
-		InterfaceOptionsFrame_OpenToCategory(GuildTracker.optionsFrame)		
+		SettingsInbound.OpenToCategory("Guild Tracker")
 	else
 		GuildTracker:Refresh()
 	end
@@ -563,19 +563,25 @@ end
 function GuildTracker:GUILD_ROSTER_UPDATE()
 --------------------------------------------------------------------------------
 	self:Debug("GUILD_ROSTER_UPDATE")
+
+	if self.LastRosterUpdate and time() - self.LastRosterUpdate <= ROSTER_REFRESH_THROTTLE then
+		self:Debug("Recently scanned, event ignored")
+		return
+	end
+
 	if InCombatLockdown() and not self.db.profile.options.scanincombat then
 		self:Debug("Not scanning in combat")
 		return
 	end
 	
-	self.LastRosterUpdate = time()
-
 	self.GuildName = GetGuildInfo("player")
 	if self.GuildName == nil then
 		self:Debug("WARNING: no guildname available!")
 		return
 	end
-	
+
+	self.LastRosterUpdate = time()
+
 	-- Switch to our current guild database, and initialize if needed
 	self:InitGuildDatabase()
 
@@ -687,16 +693,18 @@ function GuildTracker:UpdateGuildRoster()
 	
 	for i = 1, numGuildMembers, 1 do
 		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR, repStanding = GetGuildRosterInfo(i)
-		name = sanitizeName(name)
-		
-		years, months, days, hours = GetGuildRosterLastOnline(i)
-		
-		lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
-		
-		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR, repStanding))
-		
-		-- Keep our reverse lookup table in sync
-		GuildRoster_reverse[name] = #players
+		if name ~= nil then
+			name = sanitizeName(name)
+			
+			years, months, days, hours = GetGuildRosterLastOnline(i)
+			
+			lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
+			
+			tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR, repStanding))
+			
+			-- Keep our reverse lookup table in sync
+			GuildRoster_reverse[name] = #players
+		end
 	end
 	
 	self.GuildRoster = players
@@ -763,7 +771,7 @@ function GuildTracker:UpdateGuildChanges()
 			end
 			
 			-- Achievement Points
-			if info[Field.Points] and newPlayerInfo[Field.Points] ~= info[Field.Points] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
+			if newPlayerInfo[Field.Points] ~= 0 and info[Field.Points] and newPlayerInfo[Field.Points] ~= info[Field.Points] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
 				self:AddGuildChange(State.PointsChange, info, newPlayerInfo)
 			end
 
