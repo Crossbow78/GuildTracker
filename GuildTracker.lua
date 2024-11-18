@@ -1084,7 +1084,7 @@ function GuildTracker:ReportNewChanges()
 	if newChanges then
 		-- Sound alert
 		if self.db.profile.options.alerts.sound then
-			PlaySoundFile("Sound\\Interface\\AlarmClockWarning1.wav")
+			PlaySound(567436) -- AlarmClockWarning1
 		end
 	end
 end
