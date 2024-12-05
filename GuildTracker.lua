@@ -160,16 +160,16 @@ local State = {
 	RepChange = 14,
 }
 
-	local ComboState = {
-		[State.RankUp] = State.RankDown,
-		[State.RankDown] = State.RankUp,
-		[State.AccountDisabled] = State.AccountEnabled,
-		[State.AccountEnabled] = State.AccountDisabled,
-		[State.GuildJoin] = State.GuildLeave,
-		[State.GuildLeave] = State.GuildJoin,
-		[State.Inactive] = State.Active,
-		[State.Active] = State.Inactive
-	}
+local ComboState = {
+	[State.RankUp] = State.RankDown,
+	[State.RankDown] = State.RankUp,
+	[State.AccountDisabled] = State.AccountEnabled,
+	[State.AccountEnabled] = State.AccountDisabled,
+	[State.GuildJoin] = State.GuildLeave,
+	[State.GuildLeave] = State.GuildJoin,
+	[State.Inactive] = State.Active,
+	[State.Active] = State.Inactive
+}
 
 local StateInfo = {
 	[State.Unchanged] = {
@@ -574,11 +574,15 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 		return
 	end
 	
-	self.GuildName = GetGuildInfo("player")
+	self.GuildName, _, _, self.GuildRealm = GetGuildInfo("player")
 	if self.GuildName == nil then
 		self:Debug("WARNING: no guildname available!")
 		return
 	end
+
+	if self.GuildRealm == nil then
+		self.GuildRealm = GetRealmName()
+	end	
 
 	self.LastRosterUpdate = time()
 
@@ -613,22 +617,36 @@ end
 function GuildTracker:InitGuildDatabase()
 --------------------------------------------------------------------------------	
 	local guildname = self.GuildName
+	local guildrealm = self.GuildRealm
 
 	-- If necessary, initialize guild database for first use
-	if self.db.realm.guild[guildname] == nil then
-		self:Print(string.format("Creating new database for guild '%s'", guildname))
-		self.db.realm.guild[guildname] = {
-			updated = time(),
-			version = DB_VERSION,
-			roster = {},
-			changes = {}
-		}
-	else
-		self:Debug(string.format("Using existing database for guild '%s'", guildname))
+	if self.db.global.guild == nil then
+		self.db.global.guild = {}
 	end
-	
-	self.GuildDB = self.db.realm.guild[guildname]
-	
+	if self.db.global.guild[guildrealm] == nil then
+		self.db.global.guild[guildrealm] = {}
+	end
+	if self.db.global.guild[guildrealm][guildname] == nil then
+		-- See if we can migrate realm data
+		if (self.db.realm.guild ~= nil and self.db.realm.guild[guildname] ~= nil) then
+			self:Print(string.format("Migrating guild database for '%s' at realm '%s'", guildname, guildrealm))
+			self.db.global.guild[guildrealm][guildname] = tcopy(self.db.realm.guild[guildname])
+			self.db.realm.guild[guildname] = nil
+		else
+			self:Print(string.format("Creating new database for guild '%s' at realm '%s'", guildname, guildrealm))
+			self.db.global.guild[guildrealm][guildname] = {
+				updated = time(),
+				version = DB_VERSION,
+				roster = {},
+				changes = {}
+			}
+		end
+	else
+		self:Debug(string.format("Using existing database for guild '%s' at realm '%s'", guildname, guildrealm))
+	end
+
+	self.GuildDB = self.db.global.guild[guildrealm][guildname]
+
 	self:UpgradeGuildDatabase()
 end
 
@@ -677,6 +695,20 @@ function GuildTracker:UpgradeGuildDatabase()
 			info[Field.Name] = sanitizeName(info[Field.Name])
 		end
 	end
+
+	if self.GuildDB.version == 3 then
+		self:Debug("Upgrading database to version 4")
+		self.GuildDB.version = 4
+		local homeRealm = GetRealmName()
+		for i = 1, #self.GuildDB.roster do
+			local info = self.GuildDB.roster[i]
+			local name = info[Field.Name]
+
+			if strfind(name, "-") == nil then
+				info[Field.Name] = name .. "-" .. homeRealm
+			end			
+		end
+	end	
 end
 
 --------------------------------------------------------------------------------
@@ -694,10 +726,7 @@ function GuildTracker:UpdateGuildRoster()
 	for i = 1, numGuildMembers, 1 do
 		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR, repStanding = GetGuildRosterInfo(i)
 		if name ~= nil then
-			name = sanitizeName(name)
-			
 			years, months, days, hours = GetGuildRosterLastOnline(i)
-			
 			lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
 			
 			tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR, repStanding))
@@ -876,11 +905,15 @@ function GuildTracker:IsNameChange(changeJoin, changeQuit)
 	local infoJoin = changeJoin.newinfo
 	local infoQuit = changeQuit.oldinfo
 	
+	local pointDiff = infoJoin[Field.Points] - infoQuit[Field.Points]
+
 	return changeJoin.timestamp == changeQuit.timestamp
-			and infoJoin[Field.Class] == infoQuit[Field.Class]
-			and infoJoin[Field.Rank] == infoQuit[Field.Rank]
-			and infoJoin[Field.Level] == infoQuit[Field.Level]
-			and infoJoin[Field.Note] == infoQuit[Field.Note]
+		and infoJoin[Field.Class] == infoQuit[Field.Class]
+		and infoJoin[Field.Rank] == infoQuit[Field.Rank]
+		and infoJoin[Field.Level] == infoQuit[Field.Level]
+		and infoJoin[Field.Note] == infoQuit[Field.Note]
+		and infoJoin[Field.RepStanding] == infoQuit[Field.RepStanding]
+		and pointDiff >= 0 and pointDiff < 100 -- arbitrary range that we'll consider the same character
 end
 	
 --------------------------------------------------------------------------------	
@@ -983,14 +1016,13 @@ function GuildTracker:MergeStateChanges(state)
 		end --for
 	end
 end
-
 	
 --------------------------------------------------------------------------------
 function GuildTracker:GetAlertMessage(change, msgFormat, makelink)
 --------------------------------------------------------------------------------
 	local state = change.type
 	local info = (state == State.GuildLeave or state == State.NameChange) and change.oldinfo or change.newinfo
-	local name = info[Field.Name]
+	local name = sanitizeName(info[Field.Name])
 	local coloredName = "[" .. RAID_CLASS_COLORS_hex[info[Field.Class]] .. name .. "|r" .. "]"
 	local nameText = makelink and format("|Hplayer:%s|h%s|h", name, coloredName) or coloredName
 
@@ -1624,7 +1656,7 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	end
 
 	local clrChange, txtChange = self:GetStateText(changeType)
-	local txtName = RAID_CLASS_COLORS_hex[item[Field.Class]] .. item[Field.Name]
+	local txtName = RAID_CLASS_COLORS_hex[item[Field.Class]] .. sanitizeName(item[Field.Name])
 	local txtLevel = item[Field.Level]
 	local txtPoints = item[Field.Points] or ""
 	local txtRank = GuildControlGetRankName(item[Field.Rank]+1)
@@ -1866,19 +1898,19 @@ function GuildTracker:ApplyTest()
 --------------------------------------------------------------------------------
 	self.LastRosterUpdate = time()
 	
-	local testitem1 = self:FindPlayerByName(self.GuildRoster, "Crossbow")
+	local testitem1 = self:FindPlayerByName(self.GuildRoster, "Crossbow-Aggramar")
 	testitem1[Field.Rank] = 8
 	
-	local testitem2 = self:FindPlayerByName(self.GuildRoster, "Boozie")
+	local testitem2 = self:FindPlayerByName(self.GuildRoster, "Boozie-Aggramar")
 	testitem2[Field.LastOnline] = 65
 
-	local testitem3 = self:FindPlayerByName(self.GuildRoster, "Aloryna")
+	local testitem3 = self:FindPlayerByName(self.GuildRoster, "Exodeo-ArgentDawn")
 	testitem3[Field.Level] = 15
 
-	local testitem4 = self:FindPlayerByName(self.GuildRoster, "Atuad")
+	local testitem4 = self:FindPlayerByName(self.GuildRoster, "Atuad-Aggramar")
 	testitem4[Field.Note] = "Test note"
 	
-	local testitem5 = self:FindPlayerByName(self.GuildRoster, "Ironica")
+	local testitem5 = self:FindPlayerByName(self.GuildRoster, "Ironica-Aggramar")
 	testitem5[Field.Name] = "Orinaci"
 	
 	--tremove(self.GuildRoster, 1)
