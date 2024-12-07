@@ -700,15 +700,30 @@ function GuildTracker:UpgradeGuildDatabase()
 		self:Debug("Upgrading database to version 4")
 		self.GuildDB.version = 4
 		local homeRealm = GetRealmName()
+
+		local function FixName(name)
+			if strfind(name, "-") == nil then
+				return name .. "-" .. homeRealm
+			end
+			return name
+		end
+
 		for i = 1, #self.GuildDB.roster do
 			local info = self.GuildDB.roster[i]
-			local name = info[Field.Name]
-
-			if strfind(name, "-") == nil then
-				info[Field.Name] = name .. "-" .. homeRealm
-			end			
+			info[Field.Name] = FixName(info[Field.Name])
 		end
-	end	
+		for i = 1, #self.GuildDB.changes do
+			local change = self.GuildDB.changes[i]
+			if (change.oldinfo[Field.Name]) then
+				change.oldinfo[Field.Name] = FixName(change.oldinfo[Field.Name])
+			end
+			if (change.newinfo[Field.Name]) then
+				change.newinfo[Field.Name] = FixName(change.newinfo[Field.Name])
+			end
+		end
+
+	end
+
 end
 
 --------------------------------------------------------------------------------
@@ -1256,7 +1271,7 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 	
 	local _, _, longText, changeText = self:GetChangeText(change)
 	
-	local msg = string.format("%s (%d %s) %s", item[Field.Name], item[Field.Level], toproper(item[Field.Class]), changeText)
+	local msg = string.format("%s (%d %s) %s", sanitizeName(item[Field.Name]), item[Field.Level], toproper(item[Field.Class]), changeText)
 	
 	if self.db.profile.output.timestamp then
 		local txtTimestamp
@@ -1706,7 +1721,7 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 			txtNote = CLR_YELLOW .. txtNote
 		end
 	elseif changeType == State.NameChange then
-		oldName = changeItem.oldinfo[Field.Name]
+		oldName = sanitizeName(changeItem.oldinfo[Field.Name])
 	elseif changeType == State.PointsChange then
 		if changeItem.oldinfo[Field.Points] then
 			oldPoints = changeItem.oldinfo[Field.Points] .. string.format(CLR_GRAY .. " (%s%d)", (item[Field.Points] > changeItem.oldinfo[Field.Points]) and "+" or "-", math.abs(item[Field.Points] - changeItem.oldinfo[Field.Points]))
@@ -2362,8 +2377,6 @@ function GuildTracker:EnableChatType(name, value)
 	end
 end
 
-
-
 function GuildTracker:GenerateStateOptions()
 	for _,v in pairs(State) do
 		if v ~= State.Unchanged then
@@ -2375,11 +2388,11 @@ end
 function GuildTracker:GenerateStateOption(stateIdx)
 	local stateColor, stateText, longText = self:GetStateText(stateIdx)
 	return {
-			name = stateColor .. stateText,
-			desc = string.format("Player %s", longText),
-			descStyle = "inline",
-			type = "toggle",
-			order = stateIdx,
-			arg = stateIdx,
+		name = stateColor .. stateText,
+		desc = string.format("Player %s", longText),
+		descStyle = "inline",
+		type = "toggle",
+		order = stateIdx,
+		arg = stateIdx,
 	}
 end
