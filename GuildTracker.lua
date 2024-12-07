@@ -629,7 +629,7 @@ function GuildTracker:InitGuildDatabase()
 	if self.db.global.guild[guildrealm][guildname] == nil then
 		-- See if we can migrate realm data
 		if (self.db.realm.guild ~= nil and self.db.realm.guild[guildname] ~= nil) then
-			self:Print(string.format("Migrating guild database for '%s' at realm '%s'", guildname, guildrealm))
+			self:Print(string.format("Migrating existing database for guild '%s' at realm '%s'", guildname, guildrealm))
 			self.db.global.guild[guildrealm][guildname] = tcopy(self.db.realm.guild[guildname])
 			self.db.realm.guild[guildname] = nil
 		else
@@ -1131,7 +1131,7 @@ function GuildTracker:ReportNewChanges()
 	if newChanges then
 		-- Sound alert
 		if self.db.profile.options.alerts.sound then
-			PlaySound(567436) -- AlarmClockWarning1
+			PlaySound(18871) -- AlarmClockWarning1
 		end
 	end
 end
