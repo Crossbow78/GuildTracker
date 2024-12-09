@@ -67,7 +67,7 @@ end
 local function do_OnEnter(frame)
 	local tooltip = LibQTip:Acquire("GuildTrackerTip")
 	tooltip:SmartAnchorTo(frame)
-	tooltip:SetAutoHideDelay(0.5, frame)
+	tooltip:SetAutoHideDelay(0.1, frame)
 	tooltip:EnableMouse(true)
 
 	GuildTracker:UpdateTooltip()
@@ -442,13 +442,13 @@ function GuildTracker:OnInitialize()
 	self:GenerateStateOptions()
 	
 	self.dbo = LDB:NewDataObject("GuildTracker", {
-			type = "data source",
-			text = "...",
-			icon = [[Interface\Addons\GuildTracker\GuildTracker]],
-			OnEnter = do_OnEnter,
-			OnLeave = do_OnLeave,
-			OnClick = do_OnClick,
-		})	
+		type = "data source",
+		text = "...",
+		icon = [[Interface\Addons\GuildTracker\GuildTracker]],
+		OnEnter = do_OnEnter,
+		OnLeave = do_OnLeave,
+		OnClick = do_OnClick,
+	})	
 		
 	LDBIcon:Register("GuildTrackerIcon", self.dbo, self.db.profile.options.minimap)		
 	
@@ -458,7 +458,9 @@ function GuildTracker:OnInitialize()
 	self.GuildRoster = {}
 	self.ChangesPerState = {}
 	self.LastRosterUpdate = 0
-	
+
+	self:RegisterAddonCompartment()
+
 	self:Print("Initialized")
 end
 
@@ -1505,7 +1507,7 @@ function GuildTracker:UpdateTooltip()
 	local lineNum, colNum
 	
 	tooltip:Clear()
-	
+
 	local lineNum, colNum
 	tooltip:SetColumnLayout(columns, "LEFT", "LEFT", "LEFT", "CENTER", "RIGHT", "LEFT", "CENTER", "LEFT", "RIGHT", "LEFT", "LEFT")
 	
@@ -1514,6 +1516,11 @@ function GuildTracker:UpdateTooltip()
 	lineNum = tooltip:AddLine(" ")
 
 	lineNum = tooltip:AddLine()
+
+	if self.GuildDB == nil then
+		self:AddMessageToTooltip("You are not in a guild", tooltip, 1)
+		return
+	end
 	
 	lineNum = tooltip:AddLine()
 	
@@ -1581,11 +1588,6 @@ function GuildTracker:UpdateTooltip()
 	lineNum = tooltip:AddSeparator(2)
 	local curLine = lineNum
 	
-	if self.GuildDB == nil then
-		self:AddMessageToTooltip("You are not in a guild", tooltip, 1)
-		return
-	end
-
 	if self.db.profile.options.tooltip.grouping then
 	
 		for stateidx,changeList in pairs(self.ChangesPerState) do
@@ -1961,6 +1963,7 @@ function GuildTracker:GetDefaults()
 				timeformat = 2,
 				minimap = {
 					hide = true,
+					addoncompartment = false,
 				},
 				alerts = {
 					sound = true,
@@ -2082,6 +2085,18 @@ function GuildTracker:GetOptions()
 							self:UpdateMinimapIcon()
 						end,
 					},
+					addoncompartment = {
+						name = CLR_YELLOW .. "Register with addon compartment",
+						desc = "Display icon in the minimap addon compartment (requires reload)",
+						descStyle = "inline",
+						type = "toggle",
+						width = "full",
+						order = 4,
+						get = function(key) return self.db.profile.options.minimap.addoncompartment end,
+						set = function(key, value)
+							self.db.profile.options.minimap.addoncompartment = value
+						end,
+					},					
 					timeformat = {
 						name = CLR_YELLOW .. "Timestamp format",
 						desc = function()
@@ -2359,6 +2374,22 @@ function GuildTracker:UpdateMinimapIcon()
 		LDBIcon:Hide("GuildTrackerIcon")
 	else
 		LDBIcon:Show("GuildTrackerIcon")
+	end
+end
+
+function GuildTracker:RegisterAddonCompartment()
+	if self.db.profile.options.minimap.addoncompartment then
+		AddonCompartmentFrame:RegisterAddon({
+			text = "Guild Tracker",
+			icon = [[Interface\Addons\GuildTracker\GuildTracker]],
+			registerForAnyClick = true,
+			notCheckable = true,
+			func = function(button, inputData, menuItem)
+				do_OnClick(menuItem, inputData.buttonName)
+			end,
+			funcOnEnter = do_OnEnter,
+			funcOnLeave = do_OnLeave,
+		})
 	end
 end
 
