@@ -1,6 +1,6 @@
 GuildTracker = LibStub("AceAddon-3.0"):NewAddon("GuildTracker", "AceEvent-3.0", "AceConsole-3.0", "AceTimer-3.0")
 
-local DB_VERSION = 3
+local DB_VERSION = 4
 
 local ICON_DELETE = "|TInterface\\Buttons\\UI-GroupLoot-Pass-Up:16:16:0:0:16:16:0:16:0:16|t"
 local ICON_CHAT = "|TInterface\\ChatFrame\\UI-ChatWhisperIcon:16:16:0:0:16:16:0:16:0:16|t"
@@ -578,7 +578,7 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 	
 	self.GuildName, _, _, self.GuildRealm = GetGuildInfo("player")
 	if self.GuildName == nil then
-		self:Debug("WARNING: no guildname available!")
+		self:Debug("No guildname available yet, event ignored")
 		return
 	end
 
@@ -588,17 +588,17 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 
 	self.LastRosterUpdate = time()
 
-	-- Switch to our current guild database, and initialize if needed
-	self:InitGuildDatabase()
-
 	-- Load current guild roster into self.GuildRoster
 	self:UpdateGuildRoster()
 
 	if #self.GuildRoster == 0 then
-		self:Debug("Guild roster still incomplete, postponing update")
+		self:Debug("Guild roster still incomplete, event ignored")
 		self.LastRosterUpdate = nil
 		return
 	end
+
+	-- Switch to our current guild database, and initialize if needed
+	self:InitGuildDatabase()
 
 	-- Find changes between the saved roster and the current guild roster
 	self:UpdateGuildChanges()
