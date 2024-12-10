@@ -594,6 +594,12 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 	-- Load current guild roster into self.GuildRoster
 	self:UpdateGuildRoster()
 
+	if #self.GuildRoster == 0 then
+		self:Debug("Guild roster still incomplete, postponing update")
+		self.LastRosterUpdate = nil
+		return
+	end
+
 	-- Find changes between the saved roster and the current guild roster
 	self:UpdateGuildChanges()
 	
@@ -723,9 +729,7 @@ function GuildTracker:UpgradeGuildDatabase()
 				change.newinfo[Field.Name] = FixName(change.newinfo[Field.Name])
 			end
 		end
-
 	end
-
 end
 
 --------------------------------------------------------------------------------
@@ -742,15 +746,20 @@ function GuildTracker:UpdateGuildRoster()
 	
 	for i = 1, numGuildMembers, 1 do
 		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR, repStanding = GetGuildRosterInfo(i)
-		if name ~= nil then
-			years, months, days, hours = GetGuildRosterLastOnline(i)
-			lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
-			
-			tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR, repStanding))
-			
-			-- Keep our reverse lookup table in sync
-			GuildRoster_reverse[name] = #players
+
+		-- During initial load some character names may only load partially
+		if name == nil or strfind(name, "-") == nil then
+			self:Debug("Found incomplete name: " .. (name or "nil"))
+			return
 		end
+
+		years, months, days, hours = GetGuildRosterLastOnline(i)
+		lastOnline = (online or not years) and 0 or (years * 365 + months * 30.417 + days + hours/24)
+		
+		tinsert(players, getplayertable(name, rankIndex, classconst, level, note, officernote, lastOnline, achievementPoints, canSoR, repStanding))
+		
+		-- Keep our reverse lookup table in sync
+		GuildRoster_reverse[name] = #players
 	end
 	
 	self.GuildRoster = players
@@ -965,6 +974,7 @@ function GuildTracker:MergeChanges()
 		self:MergeStateChanges(State.AccountEnabled)
 		--self:MergeStateChanges(State.GuildJoin)
 		self:MergeStateChanges(State.RankUp)
+		self:MergeStateChanges(State.NameChange)
 		
 		self:SortAndGroupChanges()
 	end
@@ -983,7 +993,13 @@ function GuildTracker:MergeStateChanges(state)
 				for cIdx2 = 1, #changes do
 					if cIdx2 ~= cIdx then
 						local change2 = changes[cIdx2]
-						if (change2.type == state or change2.type == comboState) and change.newinfo and change.newinfo[Field.Name] == change2.newinfo[Field.Name] then
+
+						local isMatchByName = change.newinfo and change.newinfo[Field.Name] == change2.newinfo[Field.Name]
+						if change.type == State.NameChange then
+							isMatchByName = change.newinfo and change.newinfo[Field.Name] == change2.oldinfo[Field.Name]
+						end
+
+						if (change2.type == state or change2.type == comboState) and isMatchByName then
 							self:Debug("Merging changes of type " .. state .. ": " .. cIdx .. "/" .. cIdx2)
 							-- We found two changes of the same (or combo) type and the same name
 							local first, last = change, change2
@@ -997,12 +1013,12 @@ function GuildTracker:MergeStateChanges(state)
 								-- In this case we need to determine the net result
 								local newrank = first.newinfo[Field.Rank]
 								local oldrank = first.oldinfo[Field.Rank]
-								if newrank ~= oldrank then
-									self:Debug("Rank change merged")
-									first.type = (newrank < oldrank) and State.RankUp or State.RankDown
-								else
+								if newrank == oldrank then
 									self:Debug("Rank change cancelled")
 									first.type = State.Unchanged
+								else
+									self:Debug("Rank change merged")
+									first.type = (newrank < oldrank) and State.RankUp or State.RankDown
 								end
 							elseif state == State.NoteChange or state == State.OfficerNoteChange then
 								-- In this case we need to determine the net result
@@ -1013,6 +1029,16 @@ function GuildTracker:MergeStateChanges(state)
 									first.type = State.Unchanged
 								else
 									self:Debug("Note change merged")
+								end
+							elseif state == State.NameChange then
+								-- In this case we need to determine the net result
+								local newname = first.newinfo[Field.Name]
+								local oldname = first.oldinfo[Field.Name]
+								if newname == oldname then
+									self:Debug("Name change cancelled")
+									first.type = State.Unchanged
+								else
+									self:Debug("Name change merged")
 								end
 							elseif state == State.AccountDisabled or state == State.AccountEnabled 
 								or state == State.GuildLeave or state == State.GuildJoin
