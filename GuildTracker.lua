@@ -1541,13 +1541,12 @@ function GuildTracker:UpdateTooltip()
 	tooltip:SetCell(lineNum, 1, "|cfffed100Guild Tracker", tooltip:GetHeaderFont(), "CENTER", tooltip:GetColumnCount())
 	lineNum = tooltip:AddLine(" ")
 
-	lineNum = tooltip:AddLine()
-
 	if self.GuildDB == nil then
 		self:AddMessageToTooltip("You are not in a guild", tooltip, 1)
 		return
 	end
-	
+
+	lineNum = tooltip:AddLine()
 	lineNum = tooltip:AddLine()
 	
 	if self.db.profile.options.tooltip.grouping then
