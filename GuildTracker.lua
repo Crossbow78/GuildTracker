@@ -826,7 +826,12 @@ function GuildTracker:UpdateGuildChanges()
 			end
 			
 			-- Achievement Points
-			if newPlayerInfo[Field.Points] ~= 0 and info[Field.Points] and newPlayerInfo[Field.Points] ~= info[Field.Points] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
+			if info[Field.Points] and info[Field.Points] ~= 0 and newPlayerInfo[Field.Points] == 0 then
+				-- Points going down to zero indicates faulty roster info from a guild member who just logged on
+				-- Let's mark it in our snapshot, so we can ignore it when it recovers
+				self:Debug("Achievement points for member " .. sanitizeName(info[Field.Name]) .. " was 0 in last update, marking faulty roster entry")
+				newPlayerInfo[Field.Points] = nil
+			elseif info[Field.Points] and newPlayerInfo[Field.Points] ~= info[Field.Points] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
 				self:AddGuildChange(State.PointsChange, info, newPlayerInfo)
 			end
 
