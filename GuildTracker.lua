@@ -24,6 +24,10 @@ local _G = _G
 local tinsert, tremove, tsort, twipe = _G.table.insert, _G.table.remove, _G.table.sort, _G.table.wipe
 local pairs, ipairs = _G.pairs, _G.ipairs
 
+local wowversion = select(4, GetBuildInfo())
+local IsRetail = (wowversion > 90000)
+local IsClassic = (wowversion < 20000)
+
 local function tcopy(t)
   local u = { }
   if type(t) == 'table' then
@@ -826,12 +830,12 @@ function GuildTracker:UpdateGuildChanges()
 			end
 			
 			-- Achievement Points
-			if info[Field.Points] and info[Field.Points] ~= 0 and newPlayerInfo[Field.Points] == 0 then
+			if info[Field.Points] and info[Field.Points] > 0 and newPlayerInfo[Field.Points] == 0 then
 				-- Points going down to zero indicates faulty roster info from a guild member who just logged on
 				-- Let's mark it in our snapshot, so we can ignore it when it recovers
 				self:Debug("Achievement points for member " .. sanitizeName(info[Field.Name]) .. " was 0 in last update, marking faulty roster entry")
 				newPlayerInfo[Field.Points] = nil
-			elseif info[Field.Points] and newPlayerInfo[Field.Points] ~= info[Field.Points] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
+			elseif info[Field.Points] and newPlayerInfo[Field.Points] and newPlayerInfo[Field.Points] > 0 and newPlayerInfo[Field.Points] ~= info[Field.Points] and newPlayerInfo[Field.Level] >= self.db.profile.options.minlevel then
 				self:AddGuildChange(State.PointsChange, info, newPlayerInfo)
 			end
 
@@ -845,6 +849,7 @@ function GuildTracker:UpdateGuildChanges()
 				 self:AddGuildChange(State.OfficerNoteChange, info, newPlayerInfo)
 			end
 			
+			-- Reputation standing
 			if info[Field.RepStanding] and newPlayerInfo[Field.RepStanding] ~= info[Field.RepStanding] then
 				self:AddGuildChange(State.RepChange, info, newPlayerInfo)
 			end
@@ -1318,6 +1323,7 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 		msg = string.format("[%s] %s", txtTimestamp , msg)
 	end
 
+	local outputSent = false
 	-- Insert text to edit box
 	if sendDirectly then
 	
@@ -1329,6 +1335,7 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 					 (chat ~= "INSTANCE_CHAT" or IsInInstance()) and
 					 (chat ~= "RAID_WARNING" or UnitIsRaidOfficer("player") or UnitIsRaidLeader("player")) then
 					SendChatMessage(msg, chat)
+					outputSent = true
 				end
 			end
 		end
@@ -1338,8 +1345,13 @@ function GuildTracker:AnnounceChange(idx, sendDirectly)
 				local chanNr = GetChannelName(channel)
 				if chanNr then
 					SendChatMessage(msg, "CHANNEL", nil, chanNr)
+					outputSent = true
 				end
 			end
+		end
+
+		if not outputSent then
+			self:Print("Please configure any output channel, or hold shift to open text box.")
 		end
 		
 	else -- not sendDirectly
@@ -1540,7 +1552,11 @@ function GuildTracker:UpdateTooltip()
 	tooltip:Clear()
 
 	local lineNum, colNum
-	tooltip:SetColumnLayout(columns, "LEFT", "LEFT", "LEFT", "CENTER", "RIGHT", "LEFT", "CENTER", "LEFT", "RIGHT", "LEFT", "LEFT")
+	if (IsClassic) then
+		tooltip:SetColumnLayout(columns, "LEFT", "LEFT", "LEFT", "CENTER", "LEFT", "CENTER", "LEFT", "RIGHT", "LEFT", "LEFT")
+	else
+		tooltip:SetColumnLayout(columns, "LEFT", "LEFT", "LEFT", "CENTER", "RIGHT", "LEFT", "CENTER", "LEFT", "RIGHT", "LEFT", "LEFT")
+	end
 	
 	lineNum = tooltip:AddHeader()
 	tooltip:SetCell(lineNum, 1, "|cfffed100Guild Tracker", tooltip:GetHeaderFont(), "CENTER", tooltip:GetColumnCount())
@@ -1567,53 +1583,53 @@ function GuildTracker:UpdateTooltip()
 	end
 
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Type", nil, nil, nil, nil, 0, padding, nil, 75)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnSortHeader, "Type")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Sort by Type")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Name", nil, nil, nil, nil, 0, padding, nil, 75)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnSortHeader, "Name")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Sort by Name")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Level", nil, "CENTER", nil, nil, 0, padding, nil, 35)
-	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Points", nil, "RIGHT", nil, nil, 0, padding, nil, 38)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnSortHeader, "Level")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Sort by Level")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+
+	if not IsClassic then
+		lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Points", nil, "RIGHT", nil, nil, 0, padding, nil, 38)
+		tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnSortHeader, "Points")
+		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Sort by Points")
+		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+	end
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Rank", nil, nil, nil, nil, 0, padding, nil, 75)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnSortHeader, "Rank")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Sort by Rank")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Offline", nil, "RIGHT", nil, nil, 0, padding, nil, 60)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnSortHeader, "Offline")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Sort by last online time")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, "|cffffd200".."Note", nil, nil, nil, nil, 0, padding, 250, 150)
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, (self.db.profile.options.timeformat == 4) and ICON_TIMESTAMP or "|cffffd200".."Timestamp")
-
-	
-	tooltip:SetCellScript(lineNum, 2, "OnMouseUp", OnSortHeader, "Type")
-	tooltip:SetCellScript(lineNum, 2, "OnEnter", ShowSimpleTooltip, "Sort by Type")
-	tooltip:SetCellScript(lineNum, 2, "OnLeave", HideSimpleTooltip)
-	
-	tooltip:SetCellScript(lineNum, 3, "OnMouseUp", OnSortHeader, "Name")
-	tooltip:SetCellScript(lineNum, 3, "OnEnter", ShowSimpleTooltip, "Sort by Name")
-	tooltip:SetCellScript(lineNum, 3, "OnLeave", HideSimpleTooltip)
-
-	tooltip:SetCellScript(lineNum, 4, "OnMouseUp", OnSortHeader, "Level")
-	tooltip:SetCellScript(lineNum, 4, "OnEnter", ShowSimpleTooltip, "Sort by Level")
-	tooltip:SetCellScript(lineNum, 4, "OnLeave", HideSimpleTooltip)
-
-	tooltip:SetCellScript(lineNum, 5, "OnMouseUp", OnSortHeader, "Points")
-	tooltip:SetCellScript(lineNum, 5, "OnEnter", ShowSimpleTooltip, "Sort by Points")
-	tooltip:SetCellScript(lineNum, 5, "OnLeave", HideSimpleTooltip)
-
-	tooltip:SetCellScript(lineNum, 6, "OnMouseUp", OnSortHeader, "Rank")
-	tooltip:SetCellScript(lineNum, 6, "OnEnter", ShowSimpleTooltip, "Sort by Rank")
-	tooltip:SetCellScript(lineNum, 6, "OnLeave", HideSimpleTooltip)
-	
-	tooltip:SetCellScript(lineNum, 7, "OnMouseUp", OnSortHeader, "Offline")
-	tooltip:SetCellScript(lineNum, 7, "OnEnter", ShowSimpleTooltip, "Sort by last online time")
-	tooltip:SetCellScript(lineNum, 7, "OnLeave", HideSimpleTooltip)
-	
-	tooltip:SetCellScript(lineNum, 9, "OnMouseUp", OnSortHeader, "Timestamp")
-	tooltip:SetCellScript(lineNum, 9, "OnEnter", ShowSimpleTooltip, "Sort by Timestamp")
-	tooltip:SetCellScript(lineNum, 9, "OnLeave", HideSimpleTooltip)
-	
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnSortHeader, "Timestamp")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Sort by Timestamp")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_CHAT)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount()-1, "OnMouseUp", OnChatButton)	
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount()-1, "OnEnter", ShowSimpleTooltip, "Click to broadcast all changes to configured channel (limited to first 10)")
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount()-1, "OnLeave", HideSimpleTooltip)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnChatButton)	
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to broadcast all changes to configured channel (limited to first 10)")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_DELETE)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnMouseUp", OnDeleteButton)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnEnter", ShowSimpleTooltip, "Click to delete all changes")
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnLeave", HideSimpleTooltip)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnDeleteButton)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to delete all changes")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
 	lineNum = tooltip:AddSeparator(2)
 	local curLine = lineNum
@@ -1774,16 +1790,21 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous name:", oldName})
 		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	end
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtLevel)
 	if oldLevel then
 		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous level:", oldLevel})
 		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	end
-	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtPoints)
-	if oldPoints then
-		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous points:", oldPoints})
-		tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
-	end	
+
+	if not IsClassic then
+		lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtPoints)
+		if oldPoints then
+			tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous points:", oldPoints})
+			tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+		end	
+	end
+
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, txtRank)
 	if oldRank then
 		tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, {"Previous rank: ", oldRank})
@@ -1810,15 +1831,14 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	end
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_CHAT)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount()-1, "OnMouseUp", OnChatButton, itemIdx)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount()-1, "OnEnter", ShowSimpleTooltip, "Click to broadcast to configured channel, hold Shift to paste into chat edit box")
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount()-1, "OnLeave", HideSimpleTooltip)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnChatButton, itemIdx)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to broadcast to configured channel, hold Shift to paste into chat edit box")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_DELETE)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnMouseUp", OnDeleteButton, itemIdx)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnEnter", ShowSimpleTooltip, "Click to delete this entry")
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnLeave", HideSimpleTooltip)
-	
+	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnDeleteButton, itemIdx)
+	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to delete this entry")
+	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
 	return lineNum
 
@@ -1987,7 +2007,7 @@ function GuildTracker:GetDefaults()
 				autorefresh = true,
 				scanincombat = false,
 				autoexpire = false,
-				expiretime = 3,
+				expiretime = 24,
 				inactive = 30,
 				minlevel = 20,
 				timeformat = 2,
@@ -2013,13 +2033,13 @@ function GuildTracker:GetDefaults()
 					[9] = true,
 					[10] = true,
 					[11] = true,
-					[12] = true,
+					[12] = (not IsClassic),
 					[13] = true,
 					[14] = false,
 				},				
 				tooltip = {
 					merging = false,
-					grouping = false,
+					grouping = true,
 					sorting = "Timestamp",
 					sort_ascending = true,
 					panel = {}
@@ -2032,7 +2052,7 @@ function GuildTracker:GetDefaults()
 					SAY = false,
 					SHOUT = false,
 					PARTY = false,
-					GUILD = true,
+					GUILD = false,
 					RAID = false,
 					RAID_WARNING = false,
 				},
@@ -2119,6 +2139,8 @@ function GuildTracker:GetOptions()
 						name = CLR_YELLOW .. "Register with addon compartment",
 						desc = "Display icon in the minimap addon compartment (requires reload)",
 						descStyle = "inline",
+						disabled = function() return not IsRetail end,
+						hidden = function() return not IsRetail end,
 						type = "toggle",
 						width = "full",
 						order = 4,
@@ -2408,7 +2430,7 @@ function GuildTracker:UpdateMinimapIcon()
 end
 
 function GuildTracker:RegisterAddonCompartment()
-	if self.db.profile.options.minimap.addoncompartment then
+	if self.db.profile.options.minimap.addoncompartment and AddonCompartmentFrame then
 		AddonCompartmentFrame:RegisterAddon({
 			text = "Guild Tracker",
 			icon = [[Interface\Addons\GuildTracker\GuildTracker]],
