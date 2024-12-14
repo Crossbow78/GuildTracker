@@ -830,7 +830,7 @@ function GuildTracker:UpdateGuildChanges()
 			end
 			
 			-- Achievement Points
-			if info[Field.Points] and info[Field.Points] > 0 and newPlayerInfo[Field.Points] == 0 then
+			if info[Field.Points] and info[Field.Points] > 0 and newPlayerInfo[Field.Points] <= 0 then
 				-- Points going down to zero indicates faulty roster info from a guild member who just logged on
 				-- Let's mark it in our snapshot, so we can ignore it when it recovers
 				self:Debug("Achievement points for member " .. sanitizeName(info[Field.Name]) .. " was 0 in last update, marking faulty roster entry")
@@ -1627,9 +1627,9 @@ function GuildTracker:UpdateTooltip()
 	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_DELETE)
-	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnDeleteButton)
-	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to delete all changes")
-	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnMouseUp", OnDeleteButton)
+	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnEnter", ShowSimpleTooltip, "Click to delete all changes")
+	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnLeave", HideSimpleTooltip)
 	
 	lineNum = tooltip:AddSeparator(2)
 	local curLine = lineNum
@@ -1836,9 +1836,9 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
 	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_DELETE)
-	tooltip:SetCellScript(lineNum, colNum-1, "OnMouseUp", OnDeleteButton, itemIdx)
-	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to delete this entry")
-	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
+	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnMouseUp", OnDeleteButton, itemIdx)
+	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnEnter", ShowSimpleTooltip, "Click to delete this entry")
+	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnLeave", HideSimpleTooltip)
 	
 	return lineNum
 
