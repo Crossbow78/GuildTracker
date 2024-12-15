@@ -593,10 +593,8 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 	self.LastRosterUpdate = time()
 
 	-- Load current guild roster into self.GuildRoster
-	self:UpdateGuildRoster()
-
-	if #self.GuildRoster == 0 then
-		self:Debug("Guild roster still incomplete, event ignored")
+	if not self:UpdateGuildRoster() then
+		self:Debug("Guild roster incomplete, event ignored")
 		self.LastRosterUpdate = nil
 		return
 	end
@@ -748,13 +746,15 @@ function GuildTracker:UpdateGuildRoster()
 	
 	self:Debug(string.format("Scanning %d guild members", numGuildMembers))
 	
+	local isRosterHealthy = true
 	for i = 1, numGuildMembers, 1 do
 		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR, repStanding = GetGuildRosterInfo(i)
 
 		-- During initial load some character names may only load partially
 		if name == nil or strfind(name, "-") == nil then
-			self:Debug("Found incomplete name: " .. (name or "nil"))
-			return
+			self:Debug("Warning: Found incomplete name: " .. (name or "nil"))
+			isRosterHealthy = false
+			break
 		end
 
 		years, months, days, hours = GetGuildRosterLastOnline(i)
@@ -765,8 +765,13 @@ function GuildTracker:UpdateGuildRoster()
 		-- Keep our reverse lookup table in sync
 		GuildRoster_reverse[name] = #players
 	end
-	
-	self.GuildRoster = players
+
+	if #self.GuildRoster ~= numGuildMembers then
+		self:Debug(string.Format("Warning: Expected %d guild members but got %d", numGuildMembers, #self.GuildRoster))
+		isRosterHealthy = false
+	end
+
+	return isRosterHealthy
 end
 
 --------------------------------------------------------------------------------
@@ -1843,7 +1848,6 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	return lineNum
 
 end
-
 
 
 --------------------------------------------------------------------------------
