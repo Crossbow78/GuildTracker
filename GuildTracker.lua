@@ -590,14 +590,14 @@ function GuildTracker:GUILD_ROSTER_UPDATE()
 		self.GuildRealm = GetRealmName()
 	end	
 
-	self.LastRosterUpdate = time()
-
 	-- Load current guild roster into self.GuildRoster
 	if not self:UpdateGuildRoster() then
 		self:Debug("Guild roster incomplete, event ignored")
-		self.LastRosterUpdate = nil
 		return
 	end
+
+	-- At this point, the loaded roster is considered healthy
+	self.LastRosterUpdate = time()
 
 	-- Switch to our current guild database, and initialize if needed
 	self:InitGuildDatabase()
@@ -767,7 +767,7 @@ function GuildTracker:UpdateGuildRoster()
 	end
 
 	if #self.GuildRoster ~= numGuildMembers then
-		self:Debug(string.Format("Warning: Expected %d guild members but got %d", numGuildMembers, #self.GuildRoster))
+		self:Debug(string.format("Warning: Expected %d guild members but got %d", numGuildMembers, #self.GuildRoster))
 		isRosterHealthy = false
 	end
 
@@ -1106,7 +1106,7 @@ end
 function GuildTracker:SaveGuildRoster()
 --------------------------------------------------------------------------------
 	self:Debug("Storing guild roster")
-	
+
 	local updated, added, removed = 0, 0, 0
 	local lastusedIdx = 1
 	
@@ -1152,7 +1152,7 @@ end
 function GuildTracker:ReportNewChanges()
 --------------------------------------------------------------------------------
 	local newChanges = false
-	
+
 	for _,changeList in pairs(self.ChangesPerState) do
 		for _,changeIdx in ipairs(changeList) do
 		
@@ -1567,7 +1567,7 @@ function GuildTracker:UpdateTooltip()
 	tooltip:SetCell(lineNum, 1, "|cfffed100Guild Tracker", tooltip:GetHeaderFont(), "CENTER", tooltip:GetColumnCount())
 	lineNum = tooltip:AddLine(" ")
 
-	if self.GuildDB == nil then
+	if not IsInGuild() then
 		self:AddMessageToTooltip("You are not in a guild", tooltip, 1)
 		return
 	end
@@ -1638,6 +1638,11 @@ function GuildTracker:UpdateTooltip()
 	
 	lineNum = tooltip:AddSeparator(2)
 	local curLine = lineNum
+
+	if not self.GuildDB then
+		self:AddMessageToTooltip("Waiting for guild roster initialization...", tooltip, 1)
+		return
+	end
 	
 	if self.db.profile.options.tooltip.grouping then
 	
