@@ -1631,10 +1631,10 @@ function GuildTracker:UpdateTooltip()
 	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to broadcast all changes to configured channel (limited to first 10)")
 	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
-	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_DELETE)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnMouseUp", OnDeleteButton)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnEnter", ShowSimpleTooltip, "Click to delete all changes")
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnLeave", HideSimpleTooltip)
+	tooltip:SetCell(lineNum, colNum, ICON_DELETE)
+	tooltip:SetCellScript(lineNum, colNum, "OnMouseUp", OnDeleteButton)
+	tooltip:SetCellScript(lineNum, colNum, "OnEnter", ShowSimpleTooltip, "Click to delete all changes")
+	tooltip:SetCellScript(lineNum, colNum, "OnLeave", HideSimpleTooltip)
 	
 	lineNum = tooltip:AddSeparator(2)
 	local curLine = lineNum
@@ -1845,10 +1845,10 @@ function GuildTracker:AddChangeItemToTooltip(changeItem, tooltip, itemIdx)
 	tooltip:SetCellScript(lineNum, colNum-1, "OnEnter", ShowSimpleTooltip, "Click to broadcast to configured channel, hold Shift to paste into chat edit box")
 	tooltip:SetCellScript(lineNum, colNum-1, "OnLeave", HideSimpleTooltip)
 	
-	lineNum, colNum = tooltip:SetCell(lineNum, colNum, ICON_DELETE)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnMouseUp", OnDeleteButton, itemIdx)
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnEnter", ShowSimpleTooltip, "Click to delete this entry")
-	tooltip:SetCellScript(lineNum, tooltip:GetColumnCount(), "OnLeave", HideSimpleTooltip)
+	tooltip:SetCell(lineNum, colNum, ICON_DELETE)
+	tooltip:SetCellScript(lineNum, colNum, "OnMouseUp", OnDeleteButton, itemIdx)
+	tooltip:SetCellScript(lineNum, colNum, "OnEnter", ShowSimpleTooltip, "Click to delete this entry")
+	tooltip:SetCellScript(lineNum, colNum, "OnLeave", HideSimpleTooltip)
 	
 	return lineNum
 
