@@ -750,9 +750,17 @@ function GuildTracker:UpdateGuildRoster()
 	for i = 1, numGuildMembers, 1 do
 		name, rank, rankIndex, level, class, zone, note, officernote, online, status, classconst, achievementPoints, achievementRank, isMobile, canSoR, repStanding = GetGuildRosterInfo(i)
 
-		-- During initial load some character names may only load partially
-		if name == nil or strfind(name, "-") == nil then
-			self:Debug("Warning: Found incomplete name: " .. (name or "nil"))
+		-- During login some character names may be empty
+		if name == nil then
+			self:Debug("Warning: Found empty name: nil")
+			isRosterHealthy = false
+			break
+		end
+
+		-- During login some character names may load without or with duplicate realm names
+		local _, hyphenCount = name:gsub("-", "")
+		if hyphenCount ~= 1 then
+			self:Debug("Warning: Found invalid name: " .. name)
 			isRosterHealthy = false
 			break
 		end
